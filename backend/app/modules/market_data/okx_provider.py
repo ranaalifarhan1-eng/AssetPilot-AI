@@ -67,12 +67,17 @@ TIMEFRAME_MAP: Dict[str, str] = {
 }
 
 class OKXMarketDataProvider(BaseMarketDataProvider):
-    BASE_URL = "https://www.okx.com/api/v5/market"
+    BASE_URL = "https://www.okx.cab/api/v5/market"
+    FALLBACK_URL = "https://www.okx.com/api/v5/market"
 
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None, timeout: float = 6.0, max_retries: int = 2):
         self._custom_client = http_client
         self._timeout = timeout
         self._max_retries = max_retries
+        self._default_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
 
     @property
     def provider_name(self) -> str:
@@ -81,7 +86,7 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
     async def _get_client(self) -> httpx.AsyncClient:
         if self._custom_client:
             return self._custom_client
-        return httpx.AsyncClient(timeout=self._timeout)
+        return httpx.AsyncClient(timeout=self._timeout, headers=self._default_headers)
 
     async def get_supported_assets(self) -> List[AssetInfo]:
         return list(SUPPORTED_ASSETS_MAP.values())
@@ -159,30 +164,35 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
             raise ProviderUnavailableError(self.provider_name, f"Failed to parse candle data for {symbol}")
 
     async def _fetch_okx_json(self, url: str) -> Dict:
+        endpoints = [url]
+        if self.BASE_URL in url:
+            endpoints.append(url.replace(self.BASE_URL, self.FALLBACK_URL))
+
         last_exception = None
-        for attempt in range(1, self._max_retries + 1):
-            client = await self._get_client()
-            should_close = self._custom_client is None
-            try:
-                response = await client.get(url)
-                response.raise_for_status()
-                res_json = response.json()
-                if res_json.get("code") != "0":
-                    msg = res_json.get("msg", "OKX API error")
-                    raise ProviderUnavailableError(self.provider_name, f"OKX API error code {res_json.get('code')}: {msg}")
-                return res_json
-            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
-                last_exception = e
-                logger.warning(f"OKX fetch attempt {attempt}/{self._max_retries} failed for {url}: {e}")
-                if attempt < self._max_retries:
-                    await asyncio.sleep(0.5 * attempt)
-            finally:
-                if should_close:
-                    await client.aclose()
+        for ep_url in endpoints:
+            for attempt in range(1, self._max_retries + 1):
+                client = await self._get_client()
+                should_close = self._custom_client is None
+                try:
+                    response = await client.get(ep_url)
+                    response.raise_for_status()
+                    res_json = response.json()
+                    if res_json.get("code") != "0":
+                        msg = res_json.get("msg", "OKX API error")
+                        raise ProviderUnavailableError(self.provider_name, f"OKX API error code {res_json.get('code')}: {msg}")
+                    return res_json
+                except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
+                    last_exception = e
+                    logger.debug(f"OKX fetch {ep_url} attempt {attempt} failed: {e}")
+                    if attempt < self._max_retries:
+                        await asyncio.sleep(0.3 * attempt)
+                finally:
+                    if should_close:
+                        await client.aclose()
 
         if isinstance(last_exception, httpx.TimeoutException):
             raise ProviderTimeoutError(self.provider_name)
-        raise ProviderUnavailableError(self.provider_name, f"Network error after {self._max_retries} attempts: {str(last_exception)}")
+        raise ProviderUnavailableError(self.provider_name, f"Network error connecting to OKX: {str(last_exception)}")
 
     def _normalize_ticker(self, asset_info: AssetInfo, raw: Dict) -> NormalizedTicker:
         last_price = raw.get("last", "0")
@@ -214,5 +224,6 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
             change_24h_abs=f"{change_abs:+.4f}",
             change_24h_pct=round(change_pct, 2),
             timestamp=ts_dt,
-            provider=self.provider_name
+            provider=self.provider_name,
+            data_status="live"
         )

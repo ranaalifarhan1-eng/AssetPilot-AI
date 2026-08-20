@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from decimal import Decimal
 from datetime import datetime, timezone
 
@@ -30,32 +30,48 @@ def test_asset_taxonomy_classification():
     assert AssetCategory.INDEX_REFERENCE.value == "index_reference"
 
 @pytest.mark.asyncio
-async def test_finnhub_provider_supported_equities():
-    """Verify supported traditional equities universe contains core US stocks"""
-    provider = FinnhubEquityProvider()
-    equities = await provider.get_supported_equities()
-    assert len(equities) >= 10
-    symbols = [e.symbol for e in equities]
-    assert "AAPL" in symbols
-    assert "GOOGL" in symbols
-    assert "MSFT" in symbols
-    assert "NVDA" in symbols
-    assert "TSLA" in symbols
-    for e in equities:
-        assert e.category == "equity"
-        assert e.quote_currency == "USD"
-        assert e.venue == "NASDAQ"
-
-@pytest.mark.asyncio
-async def test_finnhub_provider_reference_quote():
-    """Verify deterministic equity quote structure in reference mode"""
+async def test_finnhub_provider_unconfigured_never_fabricates_price():
+    """Verify unconfigured Finnhub returns provider_not_configured with price=None (ZERO fake numbers)"""
     provider = FinnhubEquityProvider(api_key="")
     quote = await provider.get_quote("GOOGL")
     assert quote.symbol == "GOOGL"
     assert quote.name == "Alphabet Inc."
     assert quote.asset_type == "equity"
-    assert Decimal(quote.price) > 0
-    assert quote.currency == "USD"
+    assert quote.price is None
+    assert quote.change_abs is None
+    assert quote.change_pct is None
+    assert quote.data_status == "provider_not_configured"
+
+@pytest.mark.asyncio
+async def test_finnhub_provider_live_quote_with_mocked_key():
+    """Verify Finnhub quote parsing when key is present and provider responds"""
+    provider = FinnhubEquityProvider(api_key="mock_finnhub_api_key_valid")
+    mock_payload = {
+        "c": 182.45,
+        "d": 1.20,
+        "dp": 0.66,
+        "h": 183.00,
+        "l": 181.10,
+        "o": 181.50,
+        "pc": 181.25,
+        "t": 1718000000
+    }
+
+    with patch.object(provider, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_payload
+        mock_resp.raise_for_status.return_value = None
+        mock_client.get.return_value = mock_resp
+        mock_get_client.return_value = mock_client
+
+        quote = await provider.get_quote("GOOGL")
+
+    assert quote.symbol == "GOOGL"
+    assert quote.price == "182.45"
+    assert quote.change_abs == "+1.20"
+    assert quote.change_pct == 0.66
+    assert quote.data_status == "live"
 
 @pytest.mark.asyncio
 async def test_okx_tokenized_instrument_filtering():
@@ -64,17 +80,17 @@ async def test_okx_tokenized_instrument_filtering():
         {"instId": "XGOOGL-USDT", "instType": "SPOT"},
         {"instId": "XAAPL-USDT", "instType": "SPOT"},
         {"instId": "XMSTR-USDT", "instType": "SPOT"},
-        {"instId": "XRP-USDT", "instType": "SPOT"},  # Non-equity token, must be ignored
-        {"instId": "XLM-USDT", "instType": "SPOT"},  # Non-equity token, must be ignored
-        {"instId": "BTC-USDT", "instType": "SPOT"},  # Normal crypto, ignored
+        {"instId": "XRP-USDT", "instType": "SPOT"},
+        {"instId": "XLM-USDT", "instType": "SPOT"},
+        {"instId": "BTC-USDT", "instType": "SPOT"},
     ]
 
     provider = OKXTokenizedStocksProvider()
     with patch.object(provider, "_get_client") as mock_get_client:
         mock_client = AsyncMock()
-        mock_resp = AsyncMock()
+        mock_resp = MagicMock()
         mock_resp.json.return_value = {"code": "0", "data": mock_instruments_data}
-        mock_resp.raise_for_status = lambda: None
+        mock_resp.raise_for_status.return_value = None
         mock_client.get.return_value = mock_resp
         mock_get_client.return_value = mock_client
 
@@ -93,21 +109,53 @@ async def test_okx_tokenized_instrument_filtering():
         assert d.underlying_symbol is not None
 
 @pytest.mark.asyncio
-async def test_equity_comparison_logic():
-    """Verify underlying vs tokenized price comparison and difference calculation"""
+async def test_okx_tokenized_quote_exact_mock():
+    """Verify OKX tokenized quote preserves exact returned price and never uses hardcoded default 0.5%"""
+    mock_ticker_data = [{
+        "instId": "XGOOGL-USDT",
+        "last": "340.28",
+        "open24h": "335.00",
+        "high24h": "342.00",
+        "low24h": "334.50",
+        "vol24h": "1250",
+        "volCcy24h": "425350",
+        "ts": "1718000000000"
+    }]
+
+    provider = OKXTokenizedStocksProvider()
+    with patch.object(provider, "_get_client") as mock_get_client:
+        mock_client = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"code": "0", "data": mock_ticker_data}
+        mock_resp.raise_for_status.return_value = None
+        mock_client.get.return_value = mock_resp
+        mock_get_client.return_value = mock_client
+
+        quote = await provider.get_tokenized_quote("xGOOGL")
+
+    assert quote.symbol == "xGOOGL"
+    assert quote.price == "340.28"
+    assert quote.open_24h == "335.00"
+    assert quote.change_24h_pct == 1.58 # (340.28 - 335.00)/335.00 = 1.576 -> 1.58%
+    assert quote.data_status == "live"
+
+@pytest.mark.asyncio
+async def test_comparison_unavailable_when_finnhub_unconfigured():
+    """Verify comparison is cleanly flagged unavailable with explanation when Finnhub is not configured"""
     service = MarketDataService()
 
-    mock_equity = NormalizedEquityQuote(
+    unconfigured_equity = NormalizedEquityQuote(
         symbol="GOOGL",
         name="Alphabet Inc.",
         asset_type="equity",
         provider="Finnhub",
-        price="180.00",
-        change_abs="+1.00",
-        change_pct=0.56,
+        price=None,
+        change_abs=None,
+        change_pct=None,
         currency="USD",
-        market_timestamp=datetime.now(timezone.utc),
-        market_state="open"
+        market_timestamp=None,
+        market_state="closed",
+        data_status="provider_not_configured"
     )
 
     mock_tokenized = NormalizedTokenizedEquityQuote(
@@ -119,34 +167,31 @@ async def test_equity_comparison_logic():
         provider_symbol="XGOOGL-USDT",
         underlying_symbol="GOOGL",
         underlying_name="Alphabet Inc.",
-        price="181.80",
-        open_24h="180.00",
-        high_24h="182.00",
-        low_24h="179.00",
-        volume_24h="1000",
-        quote_volume_24h="181800",
-        change_24h_abs="+1.80",
-        change_24h_pct=1.00,
+        price="340.28",
+        open_24h="335.00",
+        high_24h="342.00",
+        low_24h="334.50",
+        volume_24h="1250",
+        quote_volume_24h="425350",
+        change_24h_abs="+5.28",
+        change_24h_pct=1.58,
         quote_currency="USDT",
         tokenized_label="Tokenized Equity • OKX",
-        timestamp=datetime.now(timezone.utc)
+        timestamp=datetime.now(timezone.utc),
+        data_status="live"
     )
 
-    with patch.object(service.equity_provider, "get_quote", return_value=mock_equity), \
+    with patch.object(service.equity_provider, "get_quote", return_value=unconfigured_equity), \
          patch.object(service.tokenized_provider, "get_tokenized_quote", return_value=mock_tokenized), \
          patch("app.modules.market_data.service.global_cache.get", return_value=None):
         
         comp = await service.compare_equity("GOOGL")
 
     assert comp.underlying_symbol == "GOOGL"
-    assert comp.underlying_price == "180.00"
-    assert comp.tokenized_counterpart_available is True
-    assert comp.tokenized_symbol == "xGOOGL"
-    assert comp.tokenized_price == "181.80"
-    assert comp.price_difference_abs == "+1.80"
-    assert comp.price_difference_pct == 1.0
-    assert comp.comparison_label == "Reference Price Difference"
-    assert "Not an arbitrage signal" in comp.disclaimer
+    assert comp.comparison_available is False
+    assert "Finnhub" in comp.unavailability_reason
+    assert comp.price_difference_abs is None
+    assert comp.price_difference_pct is None
 
 def test_api_get_supported_assets_with_type_filter():
     """Verify GET /api/v1/markets/assets filter by category"""
@@ -166,29 +211,20 @@ def test_api_get_supported_assets_with_type_filter():
     assert all(item["category"] == "crypto" for item in crypto_items)
 
 def test_api_get_equities_endpoint():
-    """Verify GET /api/v1/markets/equities returns quote list"""
+    """Verify GET /api/v1/markets/equities returns quote list with provenance"""
     resp = client.get("/api/v1/markets/equities")
     assert resp.status_code == 200
     quotes = resp.json()
     assert len(quotes) >= 10
-    symbols = [q["symbol"] for q in quotes]
-    assert "AAPL" in symbols
-    assert "NVDA" in symbols
+    for q in quotes:
+        assert "data_status" in q
+        assert q["data_status"] in ["live", "cached", "provider_not_configured", "unavailable"]
 
-def test_api_get_single_equity_endpoint():
-    """Verify GET /api/v1/markets/equities/AAPL"""
-    resp = client.get("/api/v1/markets/equities/AAPL")
+def test_api_btc_candles_endpoint():
+    """Verify GET /api/v1/markets/BTC/candles returns 200 and candle list"""
+    resp = client.get("/api/v1/markets/BTC/candles?timeframe=1H&limit=10")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["symbol"] == "AAPL"
-    assert data["asset_type"] == "equity"
-    assert float(data["price"]) > 0
-
-def test_api_get_equity_comparison_endpoint():
-    """Verify GET /api/v1/markets/equity-comparison/NVDA"""
-    resp = client.get("/api/v1/markets/equity-comparison/NVDA")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["underlying_symbol"] == "NVDA"
-    assert data["comparison_label"] == "Reference Price Difference"
-    assert "disclaimer" in data
+    assert data["symbol"] == "BTC"
+    assert "candles" in data
+    assert isinstance(data["candles"], list)

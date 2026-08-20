@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   X,
   Info,
+  Sliders,
 } from 'lucide-react';
 
 export default function MarketsPage() {
@@ -79,9 +80,10 @@ export default function MarketsPage() {
     try {
       setChartLoading(true);
       const data = await fetchAssetCandles(sym, tf, 50);
-      setCandles(data.candles);
+      setCandles(data.candles || []);
     } catch (err: any) {
       console.error(`Error loading candles for ${sym}:`, err);
+      setCandles([]);
     } finally {
       setChartLoading(false);
     }
@@ -148,6 +150,8 @@ export default function MarketsPage() {
     }
   }, [activeTab, selectedCrypto, timeframe]);
 
+  const isFinnhubUnconfigured = equities.length > 0 && equities.every(e => e.data_status === 'provider_not_configured');
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Page Header */}
@@ -155,7 +159,7 @@ export default function MarketsPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-100">Multi-Asset Market Explorer</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Normalized market feeds across Core Crypto, US Equities, and OKX Tokenized Equities.
+            Normalized live market feeds across Core Crypto, US Equities, and OKX Tokenized Equities.
           </p>
         </div>
 
@@ -346,6 +350,19 @@ export default function MarketsPage() {
       {/* TAB 2: TRADITIONAL US EQUITIES */}
       {activeTab === 'stocks' && (
         <div className="space-y-4">
+          {isFinnhubUnconfigured && (
+            <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-800/40 text-xs text-amber-300 space-y-1.5">
+              <div className="flex items-center gap-2 font-bold text-amber-200">
+                <Sliders className="h-4 w-4 text-amber-400" />
+                <span>US Equity Live Data Provider Not Configured</span>
+              </div>
+              <p className="text-amber-300/80">
+                To enable live US stocks reference pricing, configure <code>FINNHUB_API_KEY</code> in <code>backend/.env</code>.
+                AssetPilot AI enforces zero data fabrication: no synthetic or mock stock prices are displayed.
+              </p>
+            </div>
+          )}
+
           <div className="p-3.5 rounded-xl bg-gray-900/60 border border-gray-800/80 flex items-center justify-between text-xs text-gray-400">
             <span className="flex items-center gap-2">
               <Building2 className="h-4 w-4 text-emerald-400" />
@@ -356,8 +373,10 @@ export default function MarketsPage() {
 
           <Card
             title="Traditional US Equities Universe"
-            subtitle="Reference market prices, daily performance & tokenized counterpart indicators"
-            badge={<Badge variant="green" size="sm">US EQUITIES</Badge>}
+            subtitle="Live market quotes & tokenized counterpart indicators (Strict zero-fabrication mode)"
+            badge={<Badge variant={isFinnhubUnconfigured ? 'gray' : 'green'} size="sm">
+              {isFinnhubUnconfigured ? 'PROVIDER NOT CONFIGURED' : 'US EQUITIES'}
+            </Badge>}
           >
             {stocksLoading ? (
               <div className="p-8 text-center text-xs text-gray-400 font-mono">Loading US Equities quotes...</div>
@@ -376,17 +395,25 @@ export default function MarketsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-800/60 font-mono">
                     {equities.map((eq) => {
-                      const isPositive = eq.change_pct >= 0;
+                      const isPositive = (eq.change_pct || 0) >= 0;
                       return (
                         <tr key={eq.symbol} className="hover:bg-gray-900/40 transition-colors">
                           <td className="py-3 px-4 font-bold text-gray-100 font-sans">{eq.symbol}</td>
                           <td className="py-3 px-4 text-gray-300 font-sans">{eq.name}</td>
-                          <td className="py-3 px-4 font-bold text-gray-100">${parseFloat(eq.price).toFixed(2)}</td>
+                          <td className="py-3 px-4 font-bold text-gray-100">
+                            {eq.price ? `$${parseFloat(eq.price).toFixed(2)}` : (
+                              <span className="text-gray-500 text-[11px] font-sans">Provider Unconfigured</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
-                            <span className={`flex items-center gap-1 font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {isPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                              {isPositive ? `+${eq.change_pct}%` : `${eq.change_pct}%`}
-                            </span>
+                            {eq.change_pct !== null && eq.change_pct !== undefined ? (
+                              <span className={`flex items-center gap-1 font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {isPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                                {isPositive ? `+${eq.change_pct}%` : `${eq.change_pct}%`}
+                              </span>
+                            ) : (
+                              <span className="text-gray-500">—</span>
+                            )}
                           </td>
                           <td className="py-3 px-4">
                             <Badge variant={eq.market_state === 'open' ? 'green' : 'gray'} size="sm">
@@ -430,7 +457,7 @@ export default function MarketsPage() {
           >
             {tokenizedLoading ? (
               <div className="p-8 text-center text-xs text-gray-400 font-mono">Discovering OKX tokenized stock tickers...</div>
-            ) : (
+            ) : tokenizedEquities.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-gray-900/80 text-gray-400 font-mono uppercase text-[10px] border-b border-gray-800">
@@ -445,7 +472,7 @@ export default function MarketsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-800/60 font-mono">
                     {tokenizedEquities.map((tok) => {
-                      const isPositive = tok.change_24h_pct >= 0;
+                      const isPositive = (tok.change_24h_pct || 0) >= 0;
                       return (
                         <tr key={tok.symbol} className="hover:bg-gray-900/40 transition-colors">
                           <td className="py-3 px-4">
@@ -458,12 +485,20 @@ export default function MarketsPage() {
                             {tok.underlying_symbol} ({tok.underlying_name})
                           </td>
                           <td className="py-3 px-4 text-gray-400 text-[11px]">{tok.provider_symbol}</td>
-                          <td className="py-3 px-4 font-bold text-gray-100">${parseFloat(tok.price).toFixed(2)}</td>
+                          <td className="py-3 px-4 font-bold text-gray-100">
+                            {tok.price ? `$${parseFloat(tok.price).toFixed(2)}` : (
+                              <span className="text-gray-500 font-sans text-[11px]">Unavailable</span>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
-                            <span className={`flex items-center gap-1 font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {isPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                              {isPositive ? `+${tok.change_24h_pct}%` : `${tok.change_24h_pct}%`}
-                            </span>
+                            {tok.change_24h_pct !== null && tok.change_24h_pct !== undefined ? (
+                              <span className={`flex items-center gap-1 font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {isPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                                {isPositive ? `+${tok.change_24h_pct}%` : `${tok.change_24h_pct}%`}
+                              </span>
+                            ) : (
+                              <span className="text-gray-500">—</span>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right">
                             <button
@@ -478,6 +513,10 @@ export default function MarketsPage() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-xs text-gray-500 font-mono">
+                No active tokenized equity instruments currently discovered from OKX.
               </div>
             )}
           </Card>
@@ -505,7 +544,7 @@ export default function MarketsPage() {
 
             {comparisonLoading ? (
               <div className="p-8 text-center text-xs text-gray-400 font-mono">
-                Calculating reference price comparison...
+                Fetching comparison data...
               </div>
             ) : comparisonData ? (
               <div className="space-y-4">
@@ -516,12 +555,14 @@ export default function MarketsPage() {
                       Traditional Equity Reference
                     </span>
                     <div className="text-lg font-bold text-gray-100 font-mono">
-                      {comparisonData.underlying_price ? `$${parseFloat(comparisonData.underlying_price).toFixed(2)}` : 'N/A'}
+                      {comparisonData.underlying_price ? `$${parseFloat(comparisonData.underlying_price).toFixed(2)}` : (
+                        <span className="text-xs text-amber-400 font-sans font-normal">Unconfigured</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-gray-400 font-mono space-y-0.5">
                       <div>Symbol: <strong>{comparisonData.underlying_symbol}</strong></div>
                       <div>Source: <strong>{comparisonData.underlying_provider}</strong></div>
-                      <div>State: <Badge variant="green" size="sm">{comparisonData.underlying_market_state}</Badge></div>
+                      <div>State: <Badge variant={comparisonData.underlying_market_state === 'open' ? 'green' : 'gray'} size="sm">{comparisonData.underlying_market_state}</Badge></div>
                     </div>
                   </div>
 
@@ -531,7 +572,9 @@ export default function MarketsPage() {
                       OKX Tokenized Equity
                     </span>
                     <div className="text-lg font-bold text-purple-200 font-mono">
-                      {comparisonData.tokenized_price ? `$${parseFloat(comparisonData.tokenized_price).toFixed(2)}` : 'N/A'}
+                      {comparisonData.tokenized_price ? `$${parseFloat(comparisonData.tokenized_price).toFixed(2)}` : (
+                        <span className="text-xs text-gray-500 font-sans font-normal">Unavailable</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-purple-300 font-mono space-y-0.5">
                       <div>Symbol: <strong>{comparisonData.tokenized_symbol || 'None'}</strong></div>
@@ -542,7 +585,7 @@ export default function MarketsPage() {
                 </div>
 
                 {/* Price Difference Metrics */}
-                {comparisonData.tokenized_counterpart_available ? (
+                {comparisonData.comparison_available ? (
                   <div className="p-4 rounded-xl bg-gray-950/80 border border-gray-800 flex items-center justify-between text-xs font-mono">
                     <span className="text-gray-300 font-medium">Reference Price Difference:</span>
                     <div className="flex items-center gap-2">
@@ -555,8 +598,9 @@ export default function MarketsPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-800/30 text-xs text-amber-300">
-                    No active OKX tokenized counterpart is currently listed for this stock.
+                  <div className="p-3 rounded-lg bg-gray-950 border border-gray-800 text-xs text-gray-400 space-y-1">
+                    <div className="font-semibold text-gray-300">Comparison Unavailable</div>
+                    <div className="text-[11px] text-gray-400">{comparisonData.unavailability_reason}</div>
                   </div>
                 )}
 

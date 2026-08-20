@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 class AssetCategory(str, Enum):
@@ -9,6 +9,13 @@ class AssetCategory(str, Enum):
     TOKENIZED_EQUITY = "tokenized_equity"
     ETF = "etf"
     INDEX_REFERENCE = "index_reference"
+
+class DataStatus(str, Enum):
+    LIVE = "live"
+    CACHED = "cached"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
+    PROVIDER_NOT_CONFIGURED = "provider_not_configured"
 
 class AssetInfo(BaseModel):
     symbol: str = Field(..., description="Normalized symbol, e.g., BTC, GOOGL, xGOOGL")
@@ -51,23 +58,26 @@ class NormalizedTicker(BaseModel):
     change_24h_pct: float = Field(..., description="Percentage 24h price change")
     timestamp: datetime = Field(..., description="Data timestamp")
     provider: str = Field("OKX", description="Data provider name")
+    data_status: str = Field("live", description="Provenance status: live, cached, stale, unavailable")
 
 class NormalizedEquityQuote(BaseModel):
     symbol: str = Field(..., description="Equity ticker symbol (e.g. AAPL, GOOGL)")
     name: str = Field(..., description="Company name")
     asset_type: str = Field("equity", description="Asset type discriminator")
     provider: str = Field("Finnhub", description="Data provider source")
-    price: str = Field(..., description="Current/latest market price")
+    price: Optional[str] = Field(None, description="Current/latest market price, null if unconfigured")
     previous_close: Optional[str] = Field(None, description="Previous session close price")
     open_price: Optional[str] = Field(None, description="Current session open price")
     high: Optional[str] = Field(None, description="Day high price")
     low: Optional[str] = Field(None, description="Day low price")
-    change_abs: str = Field(..., description="Day price change absolute")
-    change_pct: float = Field(..., description="Day price change percentage")
+    change_abs: Optional[str] = Field(None, description="Day price change absolute")
+    change_pct: Optional[float] = Field(None, description="Day price change percentage")
     volume: Optional[str] = Field(None, description="Trading volume")
     currency: str = Field("USD", description="Quoted currency")
-    market_timestamp: datetime = Field(..., description="Quote timestamp")
-    market_state: str = Field("open", description="Market status: open, closed, reference")
+    market_timestamp: Optional[datetime] = Field(None, description="Quote timestamp from provider")
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Local fetch timestamp")
+    market_state: str = Field("closed", description="Market status: open, closed")
+    data_status: str = Field("live", description="Provenance status: live, cached, stale, unavailable, provider_not_configured")
 
 class NormalizedTokenizedEquityQuote(BaseModel):
     symbol: str = Field(..., description="Token symbol (e.g. xGOOGL)")
@@ -78,28 +88,34 @@ class NormalizedTokenizedEquityQuote(BaseModel):
     provider_symbol: str = Field(..., description="OKX instrument ID (e.g. XGOOGL-USDT)")
     underlying_symbol: str = Field(..., description="Underlying equity symbol (e.g. GOOGL)")
     underlying_name: str = Field(..., description="Underlying company name")
-    price: str = Field(..., description="Current OKX token price in USDT")
-    open_24h: str = Field(..., description="24h open price")
-    high_24h: str = Field(..., description="24h high price")
-    low_24h: str = Field(..., description="24h low price")
-    volume_24h: str = Field(..., description="24h base token volume")
-    quote_volume_24h: str = Field(..., description="24h quote volume (USDT)")
-    change_24h_abs: str = Field(..., description="24h price change absolute")
-    change_24h_pct: float = Field(..., description="24h price change percentage")
+    price: Optional[str] = Field(None, description="Current OKX token price in USDT")
+    open_24h: Optional[str] = Field(None, description="24h open price")
+    high_24h: Optional[str] = Field(None, description="24h high price")
+    low_24h: Optional[str] = Field(None, description="24h low price")
+    volume_24h: Optional[str] = Field(None, description="24h base token volume")
+    quote_volume_24h: Optional[str] = Field(None, description="24h quote volume (USDT)")
+    change_24h_abs: Optional[str] = Field(None, description="24h price change absolute")
+    change_24h_pct: Optional[float] = Field(None, description="24h price change percentage")
     quote_currency: str = Field("USDT", description="Quote currency")
     tokenized_label: str = Field("Tokenized Equity • OKX", description="Explicit tokenized designation")
-    timestamp: datetime = Field(..., description="OKX timestamp")
+    timestamp: Optional[datetime] = Field(None, description="OKX timestamp")
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Local fetch timestamp")
+    data_status: str = Field("live", description="Provenance status: live, cached, stale, unavailable")
 
 class EquityComparisonResponse(BaseModel):
     underlying_symbol: str = Field(..., description="Underlying equity ticker, e.g. GOOGL")
     underlying_name: str = Field(..., description="Underlying company name")
+    comparison_available: bool = Field(..., description="Whether both underlying and tokenized live quotes are available")
+    unavailability_reason: Optional[str] = Field(None, description="Reason comparison cannot be calculated")
     underlying_price: Optional[str] = Field(None, description="Traditional reference price in USD")
     underlying_provider: str = Field("Finnhub", description="Traditional equity source")
-    underlying_market_state: str = Field("open", description="Traditional market state: open, closed, reference")
+    underlying_data_status: str = Field("provider_not_configured", description="Underlying data provenance")
+    underlying_market_state: str = Field("closed", description="Traditional market state: open, closed")
     underlying_timestamp: Optional[datetime] = Field(None, description="Traditional quote timestamp")
     tokenized_counterpart_available: bool = Field(..., description="Whether an OKX tokenized counterpart is listed")
     tokenized_symbol: Optional[str] = Field(None, description="Tokenized symbol, e.g. xGOOGL")
     tokenized_provider: Optional[str] = Field(None, description="Tokenized venue, e.g. OKX")
+    tokenized_data_status: Optional[str] = Field(None, description="Tokenized quote provenance")
     tokenized_price: Optional[str] = Field(None, description="OKX tokenized price in USDT")
     tokenized_timestamp: Optional[datetime] = Field(None, description="OKX token timestamp")
     price_difference_abs: Optional[str] = Field(None, description="Reference absolute difference")

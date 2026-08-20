@@ -2,6 +2,13 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
+class RawAccountBalance(BaseModel):
+    ccy: str
+    total: str
+    available: str
+    frozen: str = "0"
+    source: str
+
 class AccountSourceBalance(BaseModel):
     source: str = Field(..., description="Account source name, e.g., 'Trading' or 'Funding'")
     balance: str = Field(..., description="Total balance in this account source")

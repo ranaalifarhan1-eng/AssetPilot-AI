@@ -116,7 +116,6 @@ class MarketDataService:
         if cached:
             return cached
 
-        # Check if it is a traditional equity
         if symbol_upper in SUPPORTED_EQUITIES_MAP:
             candles = await self.equity_provider.get_candles(symbol_upper, timeframe, limit)
             provider_name = self.equity_provider.provider_name
@@ -192,8 +191,7 @@ class MarketDataService:
         if cached:
             return cached
 
-        raw_meta = RECOGNIZED_UNDERLYING_MAP.get(sym_upper)
-        comp_name = raw_meta["name"] if isinstance(raw_meta, dict) else (raw_meta or f"{sym_upper} Corporation")
+        comp_name = RECOGNIZED_UNDERLYING_MAP.get(sym_upper, f"{sym_upper} Corporation")
 
         # Concurrently fetch traditional equity quote and OKX tokenized quote
         eq_task = self.equity_provider.get_quote(sym_upper)
@@ -204,11 +202,19 @@ class MarketDataService:
         eq_quote: Optional[NormalizedEquityQuote] = eq_res if isinstance(eq_res, NormalizedEquityQuote) else None
         token_quote: Optional[NormalizedTokenizedEquityQuote] = token_res if isinstance(token_res, NormalizedTokenizedEquityQuote) else None
 
-        has_tokenized = token_quote is not None
+        has_tokenized = token_quote is not None and token_quote.data_status != "unavailable"
+        comparison_available = False
+        unavailability_reason = None
         diff_abs = None
         diff_pct = None
 
-        if eq_quote and token_quote:
+        if not eq_quote or eq_quote.data_status == "provider_not_configured":
+            unavailability_reason = "Traditional equity provider (Finnhub) not configured"
+        elif eq_quote.data_status == "unavailable" or not eq_quote.price:
+            unavailability_reason = "Traditional equity market data currently unavailable"
+        elif not token_quote or token_quote.data_status == "unavailable" or not token_quote.price:
+            unavailability_reason = "OKX tokenized equity feed currently unavailable"
+        else:
             try:
                 eq_px = Decimal(eq_quote.price)
                 tok_px = Decimal(token_quote.price)
@@ -217,20 +223,26 @@ class MarketDataService:
                 if eq_px > 0:
                     pct = float((delta / eq_px) * Decimal("100"))
                     diff_pct = round(pct, 2)
+                comparison_available = True
             except Exception as e:
                 logger.warning(f"Error calculating comparison difference for {sym_upper}: {e}")
+                unavailability_reason = "Calculation error"
 
         response = EquityComparisonResponse(
             underlying_symbol=sym_upper,
             underlying_name=comp_name,
-            underlying_price=eq_quote.price if eq_quote else None,
+            comparison_available=comparison_available,
+            unavailability_reason=unavailability_reason,
+            underlying_price=eq_quote.price if (eq_quote and eq_quote.price) else None,
             underlying_provider=eq_quote.provider if eq_quote else self.equity_provider.provider_name,
+            underlying_data_status=eq_quote.data_status if eq_quote else "provider_not_configured",
             underlying_market_state=eq_quote.market_state if eq_quote else "closed",
             underlying_timestamp=eq_quote.market_timestamp if eq_quote else None,
             tokenized_counterpart_available=has_tokenized,
             tokenized_symbol=token_quote.symbol if token_quote else None,
             tokenized_provider=token_quote.provider if token_quote else None,
-            tokenized_price=token_quote.price if token_quote else None,
+            tokenized_data_status=token_quote.data_status if token_quote else "unavailable",
+            tokenized_price=token_quote.price if (token_quote and token_quote.price) else None,
             tokenized_timestamp=token_quote.timestamp if token_quote else None,
             price_difference_abs=diff_abs,
             price_difference_pct=diff_pct,

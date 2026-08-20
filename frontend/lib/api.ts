@@ -29,6 +29,7 @@ export interface NormalizedTicker {
   change_24h_pct: number;
   timestamp: string;
   provider: string;
+  data_status?: string;
 }
 
 export interface NormalizedEquityQuote {
@@ -36,17 +37,19 @@ export interface NormalizedEquityQuote {
   name: string;
   asset_type: string;
   provider: string;
-  price: string;
+  price: string | null;
   previous_close: string | null;
   open_price: string | null;
   high: string | null;
   low: string | null;
-  change_abs: string;
-  change_pct: number;
+  change_abs: string | null;
+  change_pct: number | null;
   volume: string | null;
   currency: string;
-  market_timestamp: string;
-  market_state: 'open' | 'closed' | 'reference';
+  market_timestamp: string | null;
+  retrieved_at: string;
+  market_state: 'open' | 'closed';
+  data_status: 'live' | 'cached' | 'stale' | 'unavailable' | 'provider_not_configured';
 }
 
 export interface NormalizedTokenizedEquityQuote {
@@ -58,29 +61,35 @@ export interface NormalizedTokenizedEquityQuote {
   provider_symbol: string;
   underlying_symbol: string;
   underlying_name: string;
-  price: string;
-  open_24h: string;
-  high_24h: string;
-  low_24h: string;
-  volume_24h: string;
-  quote_volume_24h: string;
-  change_24h_abs: string;
-  change_24h_pct: number;
+  price: string | null;
+  open_24h: string | null;
+  high_24h: string | null;
+  low_24h: string | null;
+  volume_24h: string | null;
+  quote_volume_24h: string | null;
+  change_24h_abs: string | null;
+  change_24h_pct: number | null;
   quote_currency: string;
   tokenized_label: string;
-  timestamp: string;
+  timestamp: string | null;
+  retrieved_at: string;
+  data_status: 'live' | 'cached' | 'stale' | 'unavailable';
 }
 
 export interface EquityComparisonResponse {
   underlying_symbol: string;
   underlying_name: string;
+  comparison_available: boolean;
+  unavailability_reason: string | null;
   underlying_price: string | null;
   underlying_provider: string;
+  underlying_data_status: string;
   underlying_market_state: string;
   underlying_timestamp: string | null;
   tokenized_counterpart_available: boolean;
   tokenized_symbol: string | null;
   tokenized_provider: string | null;
+  tokenized_data_status: string | null;
   tokenized_price: string | null;
   tokenized_timestamp: string | null;
   price_difference_abs: string | null;

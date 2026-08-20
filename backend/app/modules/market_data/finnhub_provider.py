@@ -1,140 +1,201 @@
 import httpx
+import os
 import logging
 import asyncio
-import os
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 from decimal import Decimal
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from app.modules.market_data.equity_base import BaseEquityMarketDataProvider
-from app.modules.market_data.schemas import NormalizedEquityQuote, AssetInfo, NormalizedCandle, AssetCategory
+from app.modules.market_data.schemas import (
+    NormalizedEquityQuote,
+    AssetInfo,
+    NormalizedCandle,
+    AssetCategory,
+)
 from app.modules.market_data.exceptions import InvalidAssetError, ProviderUnavailableError
+from app.modules.market_data.cache import global_cache
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EQUITIES_MAP: Dict[str, Dict[str, str]] = {
-    "AAPL": {"name": "Apple Inc.", "venue": "NASDAQ", "ref_price": "228.50"},
-    "MSFT": {"name": "Microsoft Corporation", "venue": "NASDAQ", "ref_price": "448.20"},
-    "GOOGL": {"name": "Alphabet Inc.", "venue": "NASDAQ", "ref_price": "182.40"},
-    "NVDA": {"name": "NVIDIA Corporation", "venue": "NASDAQ", "ref_price": "138.80"},
-    "META": {"name": "Meta Platforms Inc.", "venue": "NASDAQ", "ref_price": "560.10"},
-    "AMZN": {"name": "Amazon.com Inc.", "venue": "NASDAQ", "ref_price": "194.30"},
-    "TSLA": {"name": "Tesla Inc.", "venue": "NASDAQ", "ref_price": "242.60"},
-    "MSTR": {"name": "MicroStrategy Inc.", "venue": "NASDAQ", "ref_price": "345.50"},
-    "MU": {"name": "Micron Technology Inc.", "venue": "NASDAQ", "ref_price": "112.40"},
-    "MRVL": {"name": "Marvell Technology Inc.", "venue": "NASDAQ", "ref_price": "88.60"},
+# Supported top 10 US Equities watch universe with company names
+SUPPORTED_EQUITIES_MAP: Dict[str, str] = {
+    "AAPL": "Apple Inc.",
+    "MSFT": "Microsoft Corporation",
+    "GOOGL": "Alphabet Inc.",
+    "NVDA": "NVIDIA Corporation",
+    "META": "Meta Platforms Inc.",
+    "AMZN": "Amazon.com Inc.",
+    "TSLA": "Tesla Inc.",
+    "MSTR": "MicroStrategy Inc.",
+    "MU": "Micron Technology Inc.",
+    "MRVL": "Marvell Technology Inc.",
 }
-
-def is_us_market_open() -> bool:
-    """Determine approximate US equity market state based on UTC time"""
-    now_utc = datetime.now(timezone.utc)
-    # Weekday check: Monday=0, Friday=4, Saturday=5, Sunday=6
-    if now_utc.weekday() >= 5:
-        return False
-    # US Market regular hours: 13:30 UTC to 20:00 UTC (9:30 AM to 4:00 PM Eastern Daylight)
-    hour = now_utc.hour + now_utc.minute / 60.0
-    return 13.5 <= hour < 20.0
 
 class FinnhubEquityProvider(BaseEquityMarketDataProvider):
     BASE_URL = "https://finnhub.io/api/v1"
 
-    def __init__(self, api_key: Optional[str] = None, timeout: float = 6.0):
-        self.api_key = api_key or os.getenv("FINNHUB_API_KEY", "")
-        self.timeout = timeout
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
+        timeout: float = 6.0,
+    ):
+        self.api_key = api_key if api_key is not None else os.getenv("FINNHUB_API_KEY", "").strip()
+        self._custom_client = http_client
+        self._timeout = timeout
 
     @property
     def provider_name(self) -> str:
         return "Finnhub"
 
+    @property
     def is_configured(self) -> bool:
         return bool(self.api_key and len(self.api_key) > 4)
 
+    def is_us_market_open(self) -> bool:
+        """Determine if US stock exchanges (NYSE/NASDAQ) are open (Monday-Friday 13:30-20:00 UTC)"""
+        now_utc = datetime.now(timezone.utc)
+        # Weekday: Monday is 0 and Sunday is 6
+        if now_utc.weekday() >= 5:
+            return False
+        
+        market_open_min = 13 * 60 + 30 # 13:30 UTC
+        market_close_min = 20 * 60     # 20:00 UTC
+        curr_min = now_utc.hour * 60 + now_utc.minute
+
+        return market_open_min <= curr_min < market_close_min
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._custom_client:
+            return self._custom_client
+        return httpx.AsyncClient(timeout=self._timeout)
+
     async def get_supported_equities(self) -> List[AssetInfo]:
-        equities = []
-        for sym, meta in SUPPORTED_EQUITIES_MAP.items():
-            equities.append(
+        assets: List[AssetInfo] = []
+        is_open = self.is_us_market_open()
+        market_status = "open" if is_open else "closed"
+
+        for sym, name in SUPPORTED_EQUITIES_MAP.items():
+            assets.append(
                 AssetInfo(
                     internal_id=f"equity:{sym.lower()}",
                     symbol=sym,
                     display_symbol=sym,
-                    name=meta["name"],
+                    name=name,
                     category=AssetCategory.EQUITY.value,
                     provider=self.provider_name,
                     provider_symbol=sym,
                     quote_currency="USD",
-                    underlying_symbol=None,
-                    underlying_name=None,
-                    venue=meta["venue"],
-                    market_status="open" if is_us_market_open() else "closed",
+                    venue="NASDAQ",
+                    market_status=market_status,
                     tradable_on_provider=False,
-                    metadata={"reference_market": "US Equities", "currency": "USD"}
+                    metadata={"provider_configured": self.is_configured}
                 )
             )
-        return equities
+        return assets
 
     async def get_quote(self, symbol: str) -> NormalizedEquityQuote:
         sym_upper = symbol.upper()
         if sym_upper not in SUPPORTED_EQUITIES_MAP:
             raise InvalidAssetError(symbol)
 
-        meta = SUPPORTED_EQUITIES_MAP[sym_upper]
-        market_state = "open" if is_us_market_open() else "closed"
+        comp_name = SUPPORTED_EQUITIES_MAP[sym_upper]
+        is_open = self.is_us_market_open()
+        market_state = "open" if is_open else "closed"
 
-        if self.is_configured():
+        # If Finnhub is not configured, return clear provider_not_configured status with zero fake prices
+        if not self.is_configured:
+            return NormalizedEquityQuote(
+                symbol=sym_upper,
+                name=comp_name,
+                asset_type=AssetCategory.EQUITY.value,
+                provider=self.provider_name,
+                price=None,
+                previous_close=None,
+                open_price=None,
+                high=None,
+                low=None,
+                change_abs=None,
+                change_pct=None,
+                volume=None,
+                currency="USD",
+                market_timestamp=None,
+                retrieved_at=datetime.now(timezone.utc),
+                market_state=market_state,
+                data_status="provider_not_configured"
+            )
+
+        # Live Finnhub fetch
+        url = f"{self.BASE_URL}/quote?symbol={sym_upper}&token={self.api_key}"
+        try:
+            client = await self._get_client()
+            should_close = self._custom_client is None
             try:
-                url = f"{self.BASE_URL}/quote?symbol={sym_upper}&token={self.api_key}"
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    current_px = data.get("c", 0)
-                    if current_px > 0:
-                        change_abs = data.get("d", 0)
-                        change_pct = data.get("dp", 0)
-                        high = data.get("h")
-                        low = data.get("l")
-                        open_px = data.get("o")
-                        prev_close = data.get("pc")
-                        ts = data.get("t", int(datetime.now(timezone.utc).timestamp()))
-                        return NormalizedEquityQuote(
-                            symbol=sym_upper,
-                            name=meta["name"],
-                            asset_type="equity",
-                            provider=self.provider_name,
-                            price=f"{Decimal(str(current_px)):.2f}",
-                            previous_close=f"{Decimal(str(prev_close)):.2f}" if prev_close else None,
-                            open_price=f"{Decimal(str(open_px)):.2f}" if open_px else None,
-                            high=f"{Decimal(str(high)):.2f}" if high else None,
-                            low=f"{Decimal(str(low)):.2f}" if low else None,
-                            change_abs=f"{Decimal(str(change_abs)):+.2f}",
-                            change_pct=round(float(change_pct), 2),
-                            volume=None,
-                            currency="USD",
-                            market_timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
-                            market_state=market_state
-                        )
-            except Exception as e:
-                logger.warning(f"Live Finnhub quote error for {symbol}: {e}. Using reference baseline.")
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            finally:
+                if should_close:
+                    await client.aclose()
 
-        # Fallback reference quote
-        ref_price = Decimal(meta["ref_price"])
-        return NormalizedEquityQuote(
-            symbol=sym_upper,
-            name=meta["name"],
-            asset_type="equity",
-            provider=f"{self.provider_name} (Reference)" if not self.is_configured() else self.provider_name,
-            price=f"{ref_price:.2f}",
-            previous_close=f"{(ref_price * Decimal('0.995')):.2f}",
-            open_price=f"{(ref_price * Decimal('0.998')):.2f}",
-            high=f"{(ref_price * Decimal('1.012')):.2f}",
-            low=f"{(ref_price * Decimal('0.991')):.2f}",
-            change_abs=f"+{(ref_price * Decimal('0.005')):.2f}",
-            change_pct=0.50,
-            volume=None,
-            currency="USD",
-            market_timestamp=datetime.now(timezone.utc),
-            market_state=market_state
-        )
+            c = data.get("c", 0) # Current price
+            d = data.get("d", 0) # Change
+            dp = data.get("dp", 0) # Percent change
+            h = data.get("h", 0) # High
+            l = data.get("l", 0) # Low
+            o = data.get("o", 0) # Open
+            pc = data.get("pc", 0) # Prev close
+            t = data.get("t", 0) # Timestamp
+
+            if c == 0 and pc == 0:
+                raise ProviderUnavailableError(self.provider_name, f"Finnhub returned 0 price for {sym_upper}")
+
+            ts_dt = datetime.fromtimestamp(t, tz=timezone.utc) if t else datetime.now(timezone.utc)
+
+            return NormalizedEquityQuote(
+                symbol=sym_upper,
+                name=comp_name,
+                asset_type=AssetCategory.EQUITY.value,
+                provider=self.provider_name,
+                price=str(c),
+                previous_close=str(pc) if pc else None,
+                open_price=str(o) if o else None,
+                high=str(h) if h else None,
+                low=str(l) if l else None,
+                change_abs=f"{d:+.2f}" if d is not None else None,
+                change_pct=round(float(dp), 2) if dp is not None else None,
+                volume=None,
+                currency="USD",
+                market_timestamp=ts_dt,
+                retrieved_at=datetime.now(timezone.utc),
+                market_state=market_state,
+                data_status="live"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch live Finnhub quote for {sym_upper}: {e}")
+            return NormalizedEquityQuote(
+                symbol=sym_upper,
+                name=comp_name,
+                asset_type=AssetCategory.EQUITY.value,
+                provider=self.provider_name,
+                price=None,
+                previous_close=None,
+                open_price=None,
+                high=None,
+                low=None,
+                change_abs=None,
+                change_pct=None,
+                volume=None,
+                currency="USD",
+                market_timestamp=None,
+                retrieved_at=datetime.now(timezone.utc),
+                market_state=market_state,
+                data_status="unavailable"
+            )
 
     async def get_quotes(self, symbols: List[str]) -> List[NormalizedEquityQuote]:
         tasks = [self.get_quote(s) for s in symbols if s.upper() in SUPPORTED_EQUITIES_MAP]
@@ -143,33 +204,8 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
         for r in results:
             if isinstance(r, NormalizedEquityQuote):
                 quotes.append(r)
-            elif isinstance(r, Exception):
-                logger.warning(f"Error resolving equity quote: {r}")
         return quotes
 
-    async def get_candles(self, symbol: str, timeframe: str = "1D", limit: int = 100) -> List[NormalizedCandle]:
-        sym_upper = symbol.upper()
-        if sym_upper not in SUPPORTED_EQUITIES_MAP:
-            raise InvalidAssetError(symbol)
-        
-        # Return deterministic reference candles for equity chart previews
-        ref_price = float(SUPPORTED_EQUITIES_MAP[sym_upper]["ref_price"])
-        now_ts = int(datetime.now(timezone.utc).timestamp())
-        candles = []
-        step_seconds = 86400 if timeframe == "1D" else 3600
-
-        for i in range(min(limit, 30), 0, -1):
-            ts = now_ts - (i * step_seconds)
-            factor = 1.0 + ((i % 5) - 2) * 0.008
-            close_px = ref_price * factor
-            candles.append(
-                NormalizedCandle(
-                    timestamp=datetime.fromtimestamp(ts, tz=timezone.utc),
-                    open=f"{close_px * 0.997:.2f}",
-                    high=f"{close_px * 1.008:.2f}",
-                    low=f"{close_px * 0.992:.2f}",
-                    close=f"{close_px:.2f}",
-                    volume="1500000"
-                )
-            )
-        return candles
+    async def get_candles(self, symbol: str, timeframe: str = "1H", limit: int = 100) -> List[NormalizedCandle]:
+        # Live candles require Finnhub stock candle endpoints if configured
+        return []

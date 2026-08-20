@@ -10,6 +10,7 @@ from app.modules.portfolio.schemas import (
     PortfolioAsset,
     AccountSourceBalance,
     PortfolioStatusResponse,
+    RawAccountBalance,
 )
 from app.modules.market_data.service import MarketDataService
 from app.modules.market_data.cache import global_cache
@@ -43,7 +44,7 @@ class PortfolioService:
         self.market_service = market_service or MarketDataService()
 
     def get_status(self) -> PortfolioStatusResponse:
-        is_config = self.account_client.is_configured()
+        is_config = self.account_client.is_configured() if callable(self.account_client.is_configured) else bool(self.account_client.is_configured)
         return PortfolioStatusResponse(
             configured=is_config,
             provider="OKX",
@@ -53,7 +54,8 @@ class PortfolioService:
         )
 
     async def get_portfolio_summary(self) -> PortfolioSummary:
-        if not self.account_client.is_configured():
+        is_config = self.account_client.is_configured() if callable(self.account_client.is_configured) else bool(self.account_client.is_configured)
+        if not is_config:
             return PortfolioSummary(
                 total_value_usdt="0.00",
                 assets=[],
@@ -79,7 +81,24 @@ class PortfolioService:
 
             merged: Dict[str, Dict] = {}
             for item in trading_raw + funding_raw:
-                sym = item["currency"].upper()
+                if isinstance(item, RawAccountBalance):
+                    sym = item.ccy.upper()
+                    bal_val = item.total
+                    avail_val = item.available
+                    froz_val = item.frozen
+                    src_val = item.source
+                elif isinstance(item, dict):
+                    sym = (item.get("ccy") or item.get("currency", "")).upper()
+                    bal_val = item.get("balance") or item.get("total", "0")
+                    avail_val = item.get("available", "0")
+                    froz_val = item.get("frozen", "0")
+                    src_val = item.get("source", "Unknown")
+                else:
+                    continue
+
+                if not sym:
+                    continue
+
                 if sym not in merged:
                     merged[sym] = {
                         "symbol": sym,
@@ -90,16 +109,16 @@ class PortfolioService:
                         "account_sources": []
                     }
 
-                bal_dec = parse_decimal(item.get("balance"))
-                avail_dec = parse_decimal(item.get("available"))
-                froz_dec = parse_decimal(item.get("frozen"))
+                bal_dec = parse_decimal(bal_val)
+                avail_dec = parse_decimal(avail_val)
+                froz_dec = parse_decimal(froz_val)
 
                 merged[sym]["total_balance"] += bal_dec
                 merged[sym]["available_balance"] += avail_dec
                 merged[sym]["frozen_balance"] += froz_dec
                 merged[sym]["account_sources"].append(
                     AccountSourceBalance(
-                        source=item["source"],
+                        source=src_val,
                         balance=str(bal_dec),
                         available=str(avail_dec),
                         frozen=str(froz_dec)
