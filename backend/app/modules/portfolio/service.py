@@ -22,7 +22,19 @@ ASSET_NAMES: Dict[str, str] = {
     "SOL": "Solana",
     "USDT": "Tether",
     "USDC": "USD Coin",
+    "WIF": "dogwifhat",
+    "ETHW": "EthereumPoW",
+    "OKB": "OKB Token",
+    "FIL": "Filecoin",
 }
+
+def parse_decimal(val: Any, default: str = "0") -> Decimal:
+    if not val:
+        return Decimal(default)
+    try:
+        return Decimal(str(val))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
 
 class PortfolioService:
     def __init__(self, account_client: Optional[OKXAccountClient] = None, market_service: Optional[MarketDataService] = None):
@@ -60,7 +72,6 @@ class PortfolioService:
             trading_raw = await self.account_client.fetch_trading_balances()
             funding_raw = await self.account_client.fetch_funding_balances()
 
-            # Merge raw balance items by symbol
             merged: Dict[str, Dict] = {}
             for item in trading_raw + funding_raw:
                 sym = item["currency"].upper()
@@ -74,9 +85,9 @@ class PortfolioService:
                         "account_sources": []
                     }
 
-                bal_dec = Decimal(str(item["balance"]))
-                avail_dec = Decimal(str(item["available"]))
-                froz_dec = Decimal(str(item["frozen"]))
+                bal_dec = parse_decimal(item.get("balance"))
+                avail_dec = parse_decimal(item.get("available"))
+                froz_dec = parse_decimal(item.get("frozen"))
 
                 merged[sym]["total_balance"] += bal_dec
                 merged[sym]["available_balance"] += avail_dec
@@ -103,7 +114,7 @@ class PortfolioService:
                 else:
                     try:
                         ticker = await self.market_service.get_ticker(sym)
-                        price_usdt_dec = Decimal(str(ticker.price))
+                        price_usdt_dec = parse_decimal(ticker.price, default="0")
                     except Exception:
                         price_usdt_dec = None
                         valuation_available = False
@@ -132,7 +143,7 @@ class PortfolioService:
             if total_portfolio_usdt > 0:
                 for asset in portfolio_assets:
                     if asset.estimated_value_usdt is not None:
-                        val_dec = Decimal(asset.estimated_value_usdt)
+                        val_dec = parse_decimal(asset.estimated_value_usdt)
                         asset.allocation_pct = round(float((val_dec / total_portfolio_usdt) * Decimal("100")), 2)
 
             # Sort by estimated value descending

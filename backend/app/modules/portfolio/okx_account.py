@@ -57,15 +57,19 @@ class OKXAccountClient:
             if raw_data and "details" in raw_data[0]:
                 for item in raw_data[0]["details"]:
                     ccy = item.get("ccy")
-                    eq = item.get("eq", "0")
-                    avail = item.get("availEq", item.get("availBal", "0"))
-                    frozen = item.get("frozenBal", "0")
-                    if float(eq) > 0 or float(avail) > 0:
+                    eq = item.get("eq") or "0"
+                    avail = item.get("availEq") or item.get("availBal") or "0"
+                    frozen = item.get("frozenBal") or "0"
+                    
+                    eq_val = float(eq) if eq else 0.0
+                    avail_val = float(avail) if avail else 0.0
+                    
+                    if eq_val > 0 or avail_val > 0:
                         balances.append({
                             "currency": ccy,
-                            "balance": str(eq if float(eq) > 0 else avail),
-                            "available": str(avail),
-                            "frozen": str(frozen),
+                            "balance": str(eq if eq_val > 0 else avail),
+                            "available": str(avail if avail else "0"),
+                            "frozen": str(frozen if frozen else "0"),
                             "source": "Trading"
                         })
         except Exception as e:
@@ -85,15 +89,17 @@ class OKXAccountClient:
             raw_data = data.get("data", [])
             for item in raw_data:
                 ccy = item.get("ccy")
-                bal = item.get("bal", "0")
-                avail = item.get("availBal", bal)
-                frozen = item.get("frozenBal", "0")
-                if float(bal) > 0:
+                bal = item.get("bal") or "0"
+                avail = item.get("availBal") or bal or "0"
+                frozen = item.get("frozenBal") or "0"
+                
+                bal_val = float(bal) if bal else 0.0
+                if bal_val > 0:
                     balances.append({
                         "currency": ccy,
                         "balance": str(bal),
-                        "available": str(avail),
-                        "frozen": str(frozen),
+                        "available": str(avail if avail else "0"),
+                        "frozen": str(frozen if frozen else "0"),
                         "source": "Funding"
                     })
         except Exception as e:
