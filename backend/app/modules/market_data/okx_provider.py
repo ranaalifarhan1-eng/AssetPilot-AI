@@ -86,14 +86,18 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
             raise ProviderUnavailableError(self.provider_name, f"Failed to parse ticker data for {symbol}")
 
     async def get_tickers(self, symbols: List[str]) -> List[NormalizedTicker]:
-        results: List[NormalizedTicker] = []
-        for symbol in symbols:
-            try:
-                ticker = await self.get_ticker(symbol)
-                results.append(ticker)
-            except Exception as e:
-                logger.warning(f"Failed to fetch ticker for {symbol}: {e}")
-        return results
+        """Fetch tickers concurrently for all symbols"""
+        tasks = [self.get_ticker(s) for s in symbols if s.upper() in SUPPORTED_ASSETS_MAP]
+        if not tasks:
+            return []
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tickers: List[NormalizedTicker] = []
+        for res in results:
+            if isinstance(res, NormalizedTicker):
+                tickers.append(res)
+            elif isinstance(res, Exception):
+                logger.warning(f"Error fetching ticker in get_tickers: {res}")
+        return tickers
 
     async def get_candles(self, symbol: str, timeframe: str = "1H", limit: int = 100) -> List[NormalizedCandle]:
         symbol_upper = symbol.upper()
@@ -143,7 +147,7 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
                 response.raise_for_status()
                 res_json = response.json()
                 if res_json.get("code") != "0":
-                    msg = res_json.get("msg", "Unknown OKX API error")
+                    msg = res_json.get("msg", "OKX API error")
                     raise ProviderUnavailableError(self.provider_name, f"OKX API error code {res_json.get('code')}: {msg}")
                 return res_json
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:

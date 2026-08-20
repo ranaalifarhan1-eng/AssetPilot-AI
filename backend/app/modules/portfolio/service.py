@@ -1,5 +1,6 @@
 import logging
-from typing import List, Dict, Optional
+import asyncio
+from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -69,8 +70,12 @@ class PortfolioService:
             return cached
 
         try:
-            trading_raw = await self.account_client.fetch_trading_balances()
-            funding_raw = await self.account_client.fetch_funding_balances()
+            # Concurrently fetch Trading and Funding balances
+            trading_raw, funding_raw = await asyncio.gather(
+                self.account_client.fetch_trading_balances(),
+                self.account_client.fetch_funding_balances(),
+                return_exceptions=False
+            )
 
             merged: Dict[str, Dict] = {}
             for item in trading_raw + funding_raw:
@@ -101,23 +106,31 @@ class PortfolioService:
                     )
                 )
 
-            # Value portfolio assets using market data
+            # Concurrently resolve prices for held assets
+            async def resolve_price(sym: str) -> tuple[str, Optional[Decimal], bool]:
+                if sym in ["USDT", "USD"]:
+                    return sym, Decimal("1.0"), True
+                try:
+                    ticker = await self.market_service.get_ticker(sym)
+                    p_dec = parse_decimal(ticker.price, default="0")
+                    return sym, p_dec, True
+                except Exception:
+                    return sym, None, False
+
+            price_tasks = [resolve_price(sym) for sym in merged.keys()]
+            price_results = await asyncio.gather(*price_tasks, return_exceptions=True)
+
+            prices_map: Dict[str, tuple[Optional[Decimal], bool]] = {}
+            for res in price_results:
+                if isinstance(res, tuple) and len(res) == 3:
+                    sym, p_dec, avail = res
+                    prices_map[sym] = (p_dec, avail)
+
             portfolio_assets: List[PortfolioAsset] = []
             total_portfolio_usdt = Decimal("0")
 
             for sym, asset_data in merged.items():
-                price_usdt_dec: Optional[Decimal] = None
-                valuation_available = True
-
-                if sym in ["USDT", "USD"]:
-                    price_usdt_dec = Decimal("1.0")
-                else:
-                    try:
-                        ticker = await self.market_service.get_ticker(sym)
-                        price_usdt_dec = parse_decimal(ticker.price, default="0")
-                    except Exception:
-                        price_usdt_dec = None
-                        valuation_available = False
+                price_usdt_dec, valuation_available = prices_map.get(sym, (None, False))
 
                 est_val_usdt_dec: Optional[Decimal] = None
                 if price_usdt_dec is not None:
@@ -162,7 +175,8 @@ class PortfolioService:
                 error_message=None
             )
 
-            await global_cache.set(cache_key, summary, ttl=15.0)
+            # Cache portfolio summary for 30 seconds
+            await global_cache.set(cache_key, summary, ttl=30.0)
             return summary
 
         except Exception as e:
