@@ -36,6 +36,44 @@ export interface CandleResponse {
   candles: NormalizedCandle[];
 }
 
+export interface AccountSourceBalance {
+  source: string;
+  balance: string;
+  available: string;
+  frozen: string;
+}
+
+export interface PortfolioAsset {
+  symbol: string;
+  name: string;
+  total_balance: string;
+  available_balance: string;
+  frozen_balance: string;
+  account_sources: AccountSourceBalance[];
+  price_usdt: string | null;
+  estimated_value_usdt: string | null;
+  valuation_available: boolean;
+  allocation_pct: number;
+}
+
+export interface PortfolioSummary {
+  total_value_usdt: string;
+  assets: PortfolioAsset[];
+  asset_count: number;
+  last_synced_at: string | null;
+  provider: string;
+  data_status: 'configured' | 'unconfigured' | 'error';
+  error_message: string | null;
+}
+
+export interface PortfolioStatusResponse {
+  configured: boolean;
+  provider: string;
+  read_only_expected: boolean;
+  last_successful_sync: string | null;
+  connection_status: 'connected' | 'unconfigured' | 'error';
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
@@ -71,6 +109,26 @@ export async function fetchAssetCandles(
   );
   if (!res.ok) {
     throw new Error(`Failed to fetch candles for ${symbol}: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/portfolio`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch portfolio summary: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPortfolioStatus(): Promise<PortfolioStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/portfolio/status`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch portfolio status: HTTP ${res.status}`);
   }
   return res.json();
 }
