@@ -29,7 +29,7 @@ class MarketDataCache:
                 "expires_at": expires_at
             }
 
-    async def clear() -> None:
+    async def clear(self) -> None:
         async with self._lock:
             self._store.clear()
 

@@ -57,6 +57,28 @@ AssetPilot AI/
 
 ---
 
+## Phase 1B — Secure Read-Only OKX Portfolio Integration
+
+- **Read-Only Account API**: Authenticated synchronization of user's personal OKX holdings via official `/api/v5/account/balance` (Trading) and `/api/v5/asset/balances` (Funding) endpoints.
+- **Strict Read-Only Enforcement**: Requires READ permission ONLY. Trade and Withdrawal permissions are strictly prohibited and never requested.
+- **Security & Privacy Isolation**:
+  - API credentials (`OKX_API_KEY`, `OKX_API_SECRET`, `OKX_API_PASSPHRASE`) exist strictly in the backend `.env` file.
+  - Zero credentials appear in frontend code, browser requests, logs, or API status responses.
+  - HMAC SHA-256 request signatures and authentication headers are scrubbed from log output.
+- **Account Source Normalization**:
+  - Distinguishes and tracks asset balances across **Trading** and **Funding** OKX accounts.
+  - Aggregates total balances, available balances, and frozen balances per asset.
+- **Portfolio Valuation & Allocation**:
+  - Values portfolio assets using live Phase 1 market prices (`BTC`, `ETH`, `SOL`) and 1.0 for `USDT`.
+  - For assets without available market pricing, balances are displayed, `valuation_available` is set to `False`, and unpriced value is safely excluded from total equity calculations.
+- **PnL / Cost Basis Limitation**: Cost basis and historical PnL are explicitly not guessed or fabricated.
+- **Portfolio Endpoints**:
+  - `GET /api/v1/portfolio`: Aggregated holdings, USDT valuation, and allocation percentages.
+  - `GET /api/v1/portfolio/status`: Safe status metadata (`configured`, `provider`, `read_only_expected`, `last_successful_sync`, `connection_status`).
+  - `GET /api/v1/portfolio/accounts`: Account source areas (`Trading`, `Funding`).
+
+---
+
 ## Getting Started
 
 ### Backend Setup
