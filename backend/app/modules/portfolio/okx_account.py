@@ -4,6 +4,7 @@ import base64
 import httpx
 import os
 import logging
+import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
@@ -12,11 +13,12 @@ logger = logging.getLogger(__name__)
 class OKXAccountClient:
     BASE_URL = "https://www.okx.com"
 
-    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None, passphrase: Optional[str] = None, timeout: float = 6.0):
+    def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None, passphrase: Optional[str] = None, timeout: float = 10.0, max_retries: int = 2):
         self.api_key = api_key or os.getenv("OKX_API_KEY", "")
         self.api_secret = api_secret or os.getenv("OKX_API_SECRET", "")
         self.passphrase = passphrase or os.getenv("OKX_API_PASSPHRASE", "")
         self.timeout = timeout
+        self.max_retries = max_retries
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.api_secret and self.passphrase)
@@ -107,22 +109,25 @@ class OKXAccountClient:
         return balances
 
     async def _authenticated_get(self, request_path: str) -> Dict[str, Any]:
-        headers = self._get_headers("GET", request_path)
-        url = f"{self.BASE_URL}{request_path}"
-        
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                res_json = response.json()
-                if res_json.get("code") != "0":
-                    msg = res_json.get("msg", "OKX account API error")
-                    logger.warning(f"OKX account API error for {request_path}: code {res_json.get('code')}")
-                    raise RuntimeError(f"OKX API error code {res_json.get('code')}: {msg}")
-                return res_json
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error fetching OKX account path {request_path}: status {e.response.status_code}")
-                raise RuntimeError(f"OKX API HTTP error status {e.response.status_code}")
-            except httpx.RequestError as e:
-                logger.error(f"Network error fetching OKX account path {request_path}")
-                raise RuntimeError("Network error connecting to OKX account API")
+        last_exception = None
+        for attempt in range(1, self.max_retries + 1):
+            headers = self._get_headers("GET", request_path)
+            url = f"{self.BASE_URL}{request_path}"
+            
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                try:
+                    response = await client.get(url, headers=headers)
+                    response.raise_for_status()
+                    res_json = response.json()
+                    if res_json.get("code") != "0":
+                        msg = res_json.get("msg", "OKX account API error")
+                        logger.warning(f"OKX account API error for {request_path}: code {res_json.get('code')}")
+                        raise RuntimeError(f"OKX API error code {res_json.get('code')}: {msg}")
+                    return res_json
+                except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                    last_exception = e
+                    logger.warning(f"OKX authenticated GET attempt {attempt}/{self.max_retries} failed for {request_path}: {e}")
+                    if attempt < self.max_retries:
+                        await asyncio.sleep(0.5 * attempt)
+
+        raise RuntimeError(f"Network error connecting to OKX account API after {self.max_retries} attempts: {str(last_exception)}")

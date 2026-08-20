@@ -26,14 +26,15 @@ export const Header: React.FC = () => {
           <span className="text-emerald-400 font-mono text-[11px]">Ready</span>
         </div>
 
-        {/* Environment Mode */}
+        {/* Product Status */}
         <Badge variant="blue" size="sm">
-          Phase 0 Shell
+          Read-Only Mode
         </Badge>
 
         <button
           className="p-2 text-gray-400 hover:text-gray-200 hover:bg-gray-800/60 rounded-lg transition-colors"
           title="Refresh Data"
+          onClick={() => window.location.reload()}
         >
           <RefreshCw className="h-4 w-4" />
         </button>
