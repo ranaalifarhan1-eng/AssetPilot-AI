@@ -1,3 +1,20 @@
+export interface AssetInfo {
+  internal_id: string;
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  category: 'crypto' | 'equity' | 'tokenized_equity' | 'etf' | 'index_reference';
+  provider: string;
+  provider_symbol: string;
+  quote_currency: string;
+  underlying_symbol: string | null;
+  underlying_name: string | null;
+  venue: string;
+  market_status: string;
+  tradable_on_provider: boolean;
+  metadata: Record<string, any>;
+}
+
 export interface NormalizedTicker {
   symbol: string;
   provider_symbol: string;
@@ -12,6 +29,64 @@ export interface NormalizedTicker {
   change_24h_pct: number;
   timestamp: string;
   provider: string;
+}
+
+export interface NormalizedEquityQuote {
+  symbol: string;
+  name: string;
+  asset_type: string;
+  provider: string;
+  price: string;
+  previous_close: string | null;
+  open_price: string | null;
+  high: string | null;
+  low: string | null;
+  change_abs: string;
+  change_pct: number;
+  volume: string | null;
+  currency: string;
+  market_timestamp: string;
+  market_state: 'open' | 'closed' | 'reference';
+}
+
+export interface NormalizedTokenizedEquityQuote {
+  symbol: string;
+  display_symbol: string;
+  name: string;
+  asset_type: string;
+  provider: string;
+  provider_symbol: string;
+  underlying_symbol: string;
+  underlying_name: string;
+  price: string;
+  open_24h: string;
+  high_24h: string;
+  low_24h: string;
+  volume_24h: string;
+  quote_volume_24h: string;
+  change_24h_abs: string;
+  change_24h_pct: number;
+  quote_currency: string;
+  tokenized_label: string;
+  timestamp: string;
+}
+
+export interface EquityComparisonResponse {
+  underlying_symbol: string;
+  underlying_name: string;
+  underlying_price: string | null;
+  underlying_provider: string;
+  underlying_market_state: string;
+  underlying_timestamp: string | null;
+  tokenized_counterpart_available: boolean;
+  tokenized_symbol: string | null;
+  tokenized_provider: string | null;
+  tokenized_price: string | null;
+  tokenized_timestamp: string | null;
+  price_difference_abs: string | null;
+  price_difference_pct: number | null;
+  comparison_label: string;
+  disclaimer: string;
 }
 
 export interface MarketOverviewResponse {
@@ -82,6 +157,71 @@ export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch market overview: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSupportedAssets(type?: string, query?: string): Promise<AssetInfo[]> {
+  const params = new URLSearchParams();
+  if (type) params.append('type', type);
+  if (query) params.append('query', query);
+  const queryStr = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/assets${queryStr}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch assets: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchEquities(): Promise<NormalizedEquityQuote[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/equities`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch equities: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchEquityQuote(symbol: string): Promise<NormalizedEquityQuote> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/equities/${symbol}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch quote for ${symbol}: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTokenizedEquities(): Promise<NormalizedTokenizedEquityQuote[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/tokenized-equities`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch tokenized equities: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTokenizedEquityQuote(symbol: string): Promise<NormalizedTokenizedEquityQuote> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/tokenized-equities/${symbol}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch tokenized quote for ${symbol}: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchEquityComparison(underlyingSymbol: string): Promise<EquityComparisonResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/markets/equity-comparison/${underlyingSymbol}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch comparison for ${underlyingSymbol}: HTTP ${res.status}`);
   }
   return res.json();
 }

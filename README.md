@@ -34,8 +34,10 @@ AssetPilot AI/
 ├── docs/                # Architecture, roadmap, security, & engine specifications
 ├── frontend/            # Next.js, TypeScript, Tailwind CSS fintech UI dashboard shell
 ├── backend/             # Python & FastAPI modular REST API service
-│   ├── app/api/v1/markets.py  # Live OKX Market Data API Router
-│   ├── app/modules/market_data/# OKX Market Provider, Cache, & Schemas
+│   ├── app/api/v1/markets.py  # Multi-Asset Market Data API Router
+│   ├── app/api/v1/portfolio.py# Read-Only Portfolio API Router
+│   ├── app/modules/market_data/# OKX, Finnhub, & Tokenized Stocks Providers, Cache, & Schemas
+│   ├── app/modules/portfolio/ # OKX Account Client & Portfolio Aggregator
 ├── scripts/             # Local development & utility scripts
 ├── .env.example         # Template for environment variables (NEVER COMMIT .env)
 └── .gitignore           # Git ignore rules for node_modules, .venv, .env, etc.
@@ -43,17 +45,24 @@ AssetPilot AI/
 
 ---
 
-## Phase 1 — Live Market Data Features
+## Phase 2A — Stocks & OKX Tokenized Stocks Foundation
 
-- **Public OKX Provider**: Real-time ticker metrics and historical OHLCV candles for `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
-- **In-Memory TTL Caching**: Tickers (10s TTL) and Candles (30s TTL) cached locally to prevent API rate limits.
-- **REST Endpoints**:
-  - `GET /api/v1/markets/overview`: Normalized tickers for core assets.
-  - `GET /api/v1/markets/assets`: List of supported assets.
-  - `GET /api/v1/markets/{symbol}`: Single asset ticker data.
-  - `GET /api/v1/markets/{symbol}/candles`: Historical OHLCV candle trends.
-- **Fintech Dashboard Integration**: Live Market Pulse cards on Overview page and interactive Price Trend charts on Markets page.
-- **Zero Credentials**: 100% public REST endpoints; no OKX API keys or secrets required.
+- **Multi-Asset Taxonomy**:
+  - `crypto`: Core cryptocurrencies (`BTC`, `ETH`, `SOL`).
+  - `equity`: Traditional US equities (`AAPL`, `MSFT`, `GOOGL`, `NVDA`, `META`, `AMZN`, `TSLA`, `MSTR`, `MU`, `MRVL`).
+  - `tokenized_equity`: OKX dynamically discovered tokenized stock instruments (e.g. `xGOOGL`, `xAAPL`, `xNVDA`, `xMSTR`, `xTSLA`, `xMU`, `xMRVL`, `xCRCL`, `xSPCX`, `xSKHY`, `xSNDK`, `xLITE`).
+- **Critical Tokenized Stock Distinction**: Tokenized stocks are explicitly designated as `Tokenized Equity • OKX` with underlying company mappings, never represented as direct shareholder equity or 1:1 custody claims.
+- **Underlying vs Tokenized Comparison**:
+  - `GET /api/v1/markets/equity-comparison/{underlying_symbol}` compares traditional reference price vs OKX tokenized price.
+  - Formatted strictly as `Reference Price Difference` with explicit timing and liquidity disclaimers.
+- **Provider Abstraction**:
+  - `FinnhubEquityProvider`: US Equities reference quotes (configurable via `FINNHUB_API_KEY` in backend `.env` with graceful reference mode when unconfigured).
+  - `OKXTokenizedStocksProvider`: Dynamic instrument discovery against OKX public SPOT API.
+  - `OKXMarketDataProvider`: Core crypto public feeds.
+- **Multi-Asset Explorer UI**:
+  - Markets page 3-tab layout: `Crypto`, `US Equities`, `Tokenized Stocks`.
+  - Interactive Reference Price Comparison modal.
+  - Header search bar with multi-asset category classification (`Crypto`, `Equity`, `Tokenized Equity • OKX`).
 
 ---
 
@@ -69,13 +78,16 @@ AssetPilot AI/
   - Distinguishes and tracks asset balances across **Trading** and **Funding** OKX accounts.
   - Aggregates total balances, available balances, and frozen balances per asset.
 - **Portfolio Valuation & Allocation**:
-  - Values portfolio assets using live Phase 1 market prices (`BTC`, `ETH`, `SOL`) and 1.0 for `USDT`.
-  - For assets without available market pricing, balances are displayed, `valuation_available` is set to `False`, and unpriced value is safely excluded from total equity calculations.
-- **PnL / Cost Basis Limitation**: Cost basis and historical PnL are explicitly not guessed or fabricated.
-- **Portfolio Endpoints**:
-  - `GET /api/v1/portfolio`: Aggregated holdings, USDT valuation, and allocation percentages.
-  - `GET /api/v1/portfolio/status`: Safe status metadata (`configured`, `provider`, `read_only_expected`, `last_successful_sync`, `connection_status`).
-  - `GET /api/v1/portfolio/accounts`: Account source areas (`Trading`, `Funding`).
+  - Values portfolio assets using live market prices (`BTC`, `ETH`, `SOL`) and 1.0 for `USDT`.
+  - Unpriced dust assets remain visible with `valuation_available=False`.
+
+---
+
+## Phase 1 — Live Market Data Features
+
+- **Public OKX Provider**: Real-time ticker metrics and historical OHLCV candles for `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
+- **In-Memory TTL Caching**: Tickers (10s TTL), Candles (30s TTL), Equity quotes (30s TTL), Tokenized instruments (20m TTL).
+- **Zero Credentials**: 100% public REST endpoints; no API keys or secrets required for public market data.
 
 ---
 
@@ -93,7 +105,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 pytest # Run unit tests
-python -m app.main
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### Frontend Setup

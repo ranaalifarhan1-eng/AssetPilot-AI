@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
 from app.modules.market_data.base import BaseMarketDataProvider
-from app.modules.market_data.schemas import NormalizedTicker, NormalizedCandle, AssetInfo
+from app.modules.market_data.schemas import NormalizedTicker, NormalizedCandle, AssetInfo, AssetCategory
 from app.modules.market_data.exceptions import (
     InvalidAssetError,
     InvalidTimeframeError,
@@ -17,22 +17,43 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_ASSETS_MAP: Dict[str, AssetInfo] = {
     "BTC": AssetInfo(
+        internal_id="crypto:btc",
         symbol="BTC",
+        display_symbol="BTC/USDT",
         name="Bitcoin",
-        category="Crypto",
-        provider_symbol="BTC-USDT"
+        category=AssetCategory.CRYPTO.value,
+        provider="OKX",
+        provider_symbol="BTC-USDT",
+        quote_currency="USDT",
+        venue="OKX SPOT",
+        market_status="24/7",
+        tradable_on_provider=True
     ),
     "ETH": AssetInfo(
+        internal_id="crypto:eth",
         symbol="ETH",
+        display_symbol="ETH/USDT",
         name="Ethereum",
-        category="Crypto",
-        provider_symbol="ETH-USDT"
+        category=AssetCategory.CRYPTO.value,
+        provider="OKX",
+        provider_symbol="ETH-USDT",
+        quote_currency="USDT",
+        venue="OKX SPOT",
+        market_status="24/7",
+        tradable_on_provider=True
     ),
     "SOL": AssetInfo(
+        internal_id="crypto:sol",
         symbol="SOL",
+        display_symbol="SOL/USDT",
         name="Solana",
-        category="Crypto",
-        provider_symbol="SOL-USDT"
+        category=AssetCategory.CRYPTO.value,
+        provider="OKX",
+        provider_symbol="SOL-USDT",
+        quote_currency="USDT",
+        venue="OKX SPOT",
+        market_status="24/7",
+        tradable_on_provider=True
     ),
 }
 
