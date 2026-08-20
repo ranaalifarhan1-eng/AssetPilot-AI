@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.health import router as health_router
+from app.api.v1.markets import router as markets_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -23,6 +24,7 @@ app.add_middleware(
 
 # Register Routers
 app.include_router(health_router, prefix=settings.API_V1_STR, tags=["Health"])
+app.include_router(markets_router, prefix=f"{settings.API_V1_STR}/markets", tags=["Markets"])
 
 @app.get("/", tags=["Root"])
 async def root():

@@ -34,52 +34,30 @@ AssetPilot AI/
 ├── docs/                # Architecture, roadmap, security, & engine specifications
 ├── frontend/            # Next.js, TypeScript, Tailwind CSS fintech UI dashboard shell
 ├── backend/             # Python & FastAPI modular REST API service
+│   ├── app/api/v1/markets.py  # Live OKX Market Data API Router
+│   ├── app/modules/market_data/# OKX Market Provider, Cache, & Schemas
 ├── scripts/             # Local development & utility scripts
 ├── .env.example         # Template for environment variables (NEVER COMMIT .env)
 └── .gitignore           # Git ignore rules for node_modules, .venv, .env, etc.
 ```
 
-### Low-Cost Data & Reasoning Pipeline
+---
 
-```
-Raw Data Sources (APIs / RSS / Web)
-        │
-        ▼
-   Collection
-        │
-        ▼
-  Normalization
-        │
-        ▼
-  Deduplication
-        │
-        ▼
-Relevance Filtering
-        │
-        ▼
- Asset Mapping
-        │
-        ▼
-Quantitative & Technical Indicators
-        │
-        ▼
-Selective LLM AI Reasoning
-        │
-        ▼
-Recommendation Engine
-        │
-        ▼
-Fintech Dashboard Shell / Alerts
-```
+## Phase 1 — Live Market Data Features
+
+- **Public OKX Provider**: Real-time ticker metrics and historical OHLCV candles for `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
+- **In-Memory TTL Caching**: Tickers (10s TTL) and Candles (30s TTL) cached locally to prevent API rate limits.
+- **REST Endpoints**:
+  - `GET /api/v1/markets/overview`: Normalized tickers for core assets.
+  - `GET /api/v1/markets/assets`: List of supported assets.
+  - `GET /api/v1/markets/{symbol}`: Single asset ticker data.
+  - `GET /api/v1/markets/{symbol}/candles`: Historical OHLCV candle trends.
+- **Fintech Dashboard Integration**: Live Market Pulse cards on Overview page and interactive Price Trend charts on Markets page.
+- **Zero Credentials**: 100% public REST endpoints; no OKX API keys or secrets required.
 
 ---
 
 ## Getting Started
-
-### Requirements
-- Node.js 18+
-- Python 3.10+
-- Git
 
 ### Backend Setup
 ```bash
@@ -92,30 +70,23 @@ source .venv/bin/activate
 
 pip install -r requirements.txt
 cp .env.example .env
+pytest # Run unit tests
 python -m app.main
 ```
-The FastAPI backend runs on `http://127.0.0.1:8000`. Access documentation at `http://127.0.0.1:8000/docs`.
 
 ### Frontend Setup
 ```bash
 cd frontend
 npm install
 cp .env.example .env
+npx tsc --noEmit
 npm run dev
 ```
-The Next.js dashboard runs on `http://localhost:3000`.
 
 ---
 
 ## Security Principles
 
-- **Strict Sandbox**: All code, configuration, scripts, logs, and artifacts reside strictly within `D:\pakalfa\AssetPilot AI`.
+- **Strict Sandbox**: All project code, scripts, logs, and artifacts reside strictly in `D:\pakalfa\AssetPilot AI`.
 - **Zero Credentials Committed**: `.env` is ignored by `.gitignore`.
-- **Read-Only API Integrations**: Exchange and broker APIs (e.g. OKX) are strictly read-only (no withdrawal, no trade execution permissions).
-- **Frontend Isolation**: Secrets and API keys are never exposed in frontend code.
-
----
-
-## License
-
-Personal project / All rights reserved.
+- **Read-Only Exchange & Public APIs**: OKX public market data requires zero API keys or authentication.
