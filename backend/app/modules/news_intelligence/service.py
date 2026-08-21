@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 CACHE_KEY_ARTICLES = "news_intelligence_articles"
 CACHE_KEY_TIMESTAMP = "news_intelligence_last_collected"
 DEFAULT_CACHE_TTL_SECONDS = 600.0  # 10 minutes cache
+MIN_REFRESH_INTERVAL_SECONDS = 60.0  # 1 minute cooldown to prevent provider spamming
 
 class NewsService:
     """Central service managing collection, deduplication, portfolio mapping, filtering, and caching."""
@@ -129,10 +130,25 @@ class NewsService:
             provider_statuses=provider_statuses
         )
 
-    async def refresh_news(self) -> int:
-        """Force a fresh collection and cache update across all providers."""
+    async def refresh_news(self, force: bool = False) -> tuple[int, bool]:
+        """
+        Force a fresh collection and cache update across all providers with cooldown protection.
+        Returns (collected_count, cooldown_active).
+        """
         async with self._lock:
-            return await self._collect_and_cache()
+            last_collected: Optional[datetime] = await global_cache.get(CACHE_KEY_TIMESTAMP)
+            cached_articles: Optional[List[NewsArticle]] = await global_cache.get(CACHE_KEY_ARTICLES)
+            
+            if not force and last_collected is not None and cached_articles is not None:
+                now = datetime.now(timezone.utc)
+                last_utc = last_collected if last_collected.tzinfo else last_collected.replace(tzinfo=timezone.utc)
+                elapsed = (now - last_utc).total_seconds()
+                if elapsed < MIN_REFRESH_INTERVAL_SECONDS:
+                    logger.debug(f"Refresh cooldown active ({elapsed:.1f}s < {MIN_REFRESH_INTERVAL_SECONDS}s). Reusing cached collection.")
+                    return len(cached_articles), True
+
+            count = await self._collect_and_cache()
+            return count, False
 
     async def _get_or_collect_articles(self) -> tuple[List[NewsArticle], Optional[datetime], NewsDataStatus]:
         """Retrieve articles from cache, or collect fresh if cache expired/missing."""

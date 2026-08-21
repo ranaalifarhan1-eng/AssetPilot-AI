@@ -156,6 +156,17 @@ async def test_finnhub_news_provider_normalization():
     googl_asset = next(ra for ra in article.related_assets if ra.symbol == "GOOGL")
     assert googl_asset.tokenized_symbol == "xGOOGL"
 
+def test_unsafe_url_scheme_rejected():
+    """Verify provider rejects non-HTTP/HTTPS URLs to prevent javascript: or data: injection."""
+    provider = FinnhubNewsProvider(api_key="mock_key")
+    unsafe_item = {
+        "headline": "Malicious Headline Attempt",
+        "url": "javascript:alert('xss')",
+        "datetime": 1724188800
+    }
+    result = provider._normalize_item(unsafe_item)
+    assert result is None
+
 @pytest.mark.asyncio
 async def test_rss_news_provider_parsing():
     """Verify RSSNewsProvider parses sample RSS XML."""
@@ -237,6 +248,44 @@ async def test_news_service_portfolio_relevance():
     assert res.articles[0].id == "art-btc"
     assert res.articles[0].is_portfolio_relevant is True
     assert res.articles[0].portfolio_asset_match == "BTC"
+
+@pytest.mark.asyncio
+async def test_news_refresh_cooldown_safety():
+    """Verify refresh_news() respects 60s cooldown and does not repeat upstream calls unless forced."""
+    now = datetime.now(timezone.utc)
+    mock_art = NewsArticle(
+        id="art-cd", external_id="1", headline="Market Overview", summary="Summary",
+        source="Finnhub", publisher="Reuters", url="https://example.com/art",
+        published_at=now, retrieved_at=now, category=NewsCategory.GENERAL,
+        related_assets=[], related_companies=[], relevance_score=0.5,
+        sentiment_label=SentimentLabel.NEUTRAL, sentiment_score=0.0, impact_level=ImpactLevel.LOW,
+        is_portfolio_relevant=False, portfolio_asset_match=None, duplicate_count=1, data_status=NewsDataStatus.LIVE
+    )
+
+    mock_provider = AsyncMock()
+    mock_provider.fetch_latest_news.return_value = [mock_art]
+    mock_provider.is_configured = True
+    mock_provider.provider_name = "MockProvider"
+
+    service = NewsService(providers=[mock_provider])
+    
+    # 1. First refresh -> triggers collection
+    count1, cd1 = await service.refresh_news()
+    assert count1 == 1
+    assert cd1 is False
+    assert mock_provider.fetch_latest_news.call_count == 1
+
+    # 2. Immediate second refresh -> cooldown active, reuses existing collection
+    count2, cd2 = await service.refresh_news()
+    assert count2 == 1
+    assert cd2 is True
+    assert mock_provider.fetch_latest_news.call_count == 1  # No extra upstream call!
+
+    # 3. Forced refresh -> bypasses cooldown
+    count3, cd3 = await service.refresh_news(force=True)
+    assert count3 == 1
+    assert cd3 is False
+    assert mock_provider.fetch_latest_news.call_count == 2
 
 def test_api_get_news_endpoints():
     """Verify /api/v1/news and /api/v1/news/status endpoint responses."""

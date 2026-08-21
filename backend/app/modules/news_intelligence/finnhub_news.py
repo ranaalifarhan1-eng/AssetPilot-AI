@@ -117,6 +117,10 @@ class FinnhubNewsProvider(BaseNewsProvider):
         if not headline or not url:
             return None
 
+        # Content safety: ensure valid HTTP/HTTPS scheme
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return None
+
         summary = (raw.get("summary") or "").strip() or None
         publisher = (raw.get("source") or "Finnhub").strip()
         external_id = str(raw.get("id", ""))

@@ -85,11 +85,18 @@ async def get_news_status():
         )
 
 @router.post("/refresh", summary="Trigger On-Demand News Collection")
-async def refresh_news_collection():
-    """Manually refresh news collection across all configured providers."""
+async def refresh_news_collection(
+    force: bool = Query(False, description="Force fresh upstream collection ignoring 60s cooldown")
+):
+    """Manually refresh news collection across all configured providers with server-side cooldown protection."""
     try:
-        count = await news_service.refresh_news()
-        return {"status": "success", "collected_articles_count": count}
+        count, cooldown_active = await news_service.refresh_news(force=force)
+        return {
+            "status": "success",
+            "collected_articles_count": count,
+            "cooldown_active": cooldown_active,
+            "message": "Cooldown active; returned existing cached collection." if cooldown_active else "Fresh collection complete."
+        }
     except Exception as e:
         logger.error(f"Error refreshing news: {e}")
         raise HTTPException(

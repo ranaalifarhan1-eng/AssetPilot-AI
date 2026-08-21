@@ -148,13 +148,13 @@ class RSSNewsProvider(BaseNewsProvider):
             if not headline:
                 return None
 
-            # Clean link
+            # Clean link and enforce safe HTTP/HTTPS scheme
             url = ""
             if link_el is not None:
                 url = link_el.text or link_el.get("href") or ""
                 url = url.strip()
 
-            if not url:
+            if not url or not (url.startswith("http://") or url.startswith("https://")):
                 return None
 
             summary_raw = desc_el.text if desc_el is not None and desc_el.text else ""
