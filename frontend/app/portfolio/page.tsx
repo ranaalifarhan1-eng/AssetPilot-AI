@@ -80,7 +80,7 @@ export default function PortfolioPage() {
             <div className="font-semibold text-amber-200">Partial Valuation Active</div>
             <p className="text-gray-300 leading-relaxed">
               Price lookups for <strong>{portfolio.unvalued_asset_count} asset(s)</strong> ({portfolio.unvalued_assets.join(', ')}) are currently unavailable from live market feeds. 
-              The total equity displayed below (<strong>${parseFloat(portfolio.known_value_usdt).toFixed(2)} USDT</strong>) represents known valued assets only and is not a complete valuation.
+              The total equity displayed below (<strong>${parseFloat(portfolio.known_value_usdt).toFixed(2)} USDT</strong>) represents known valued assets only and is not a complete valuation. Asset allocations reflect priced holdings only.
             </p>
           </div>
         </div>
@@ -91,9 +91,9 @@ export default function PortfolioPage() {
         <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-800/50 text-xs text-blue-300 flex items-start gap-3">
           <Clock className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
           <div>
-            <span className="font-semibold text-blue-200">Stale Complete Valuation Preserved: </span>
+            <span className="font-semibold text-blue-200">Stale Price Fallback Active: </span>
             <span className="text-gray-300">
-              Retaining last complete valuation (${parseFloat(portfolio.total_value_usdt).toFixed(2)} USDT) while awaiting live price updates for: {portfolio.unvalued_assets.join(', ')}.
+              Total equity (${parseFloat(portfolio.total_value_usdt).toFixed(2)} USDT) is dynamically calculated using current balances and verified last-known-good prices for: {portfolio.stale_assets.join(', ')} (within {portfolio.stale_window_seconds / 60}m window).
             </span>
           </div>
         </div>
@@ -166,7 +166,7 @@ export default function PortfolioPage() {
                   </span>
                 ) : portfolio.valuation_status === 'stale_complete' ? (
                   <span className="text-base font-bold text-amber-400 font-mono flex items-center gap-1">
-                    <Clock className="h-4 w-4" /> Stale Valuation
+                    <Clock className="h-4 w-4" /> Stale Valuation ({portfolio.stale_assets.join(', ')})
                   </span>
                 ) : (
                   <span className="text-base font-bold text-amber-400 font-mono flex items-center gap-1">
@@ -226,7 +226,12 @@ export default function PortfolioPage() {
                       </td>
                       <td className="py-3 px-4">
                         {asset.price_usdt ? (
-                          <span>${parseFloat(asset.price_usdt) >= 1 ? parseFloat(asset.price_usdt).toFixed(2) : parseFloat(asset.price_usdt).toFixed(4)}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span>${parseFloat(asset.price_usdt) >= 1 ? parseFloat(asset.price_usdt).toFixed(2) : parseFloat(asset.price_usdt).toFixed(4)}</span>
+                            {asset.price_status === 'stale' && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">STALE</span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-gray-500 text-[11px] font-sans">N/A</span>
                         )}

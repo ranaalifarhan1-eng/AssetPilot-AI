@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -18,7 +18,8 @@ from app.modules.market_data.cache import global_cache
 logger = logging.getLogger(__name__)
 
 CACHE_KEY_LATEST = "portfolio_summary"
-CACHE_KEY_LAST_COMPLETE = "portfolio_summary_last_complete"
+CACHE_PREFIX_LAST_PRICE = "last_known_price:"
+STALE_PRICE_MAX_AGE_SECONDS = 900.0  # 15 minutes staleness window for fallback pricing
 
 # Map asset names
 ASSET_NAMES: Dict[str, str] = {
@@ -68,6 +69,8 @@ class PortfolioService:
                 valued_asset_count=0,
                 unvalued_asset_count=0,
                 unvalued_assets=[],
+                stale_assets=[],
+                stale_window_seconds=int(STALE_PRICE_MAX_AGE_SECONDS),
                 last_complete_valuation_at=None,
                 last_complete_total_usdt=None,
                 assets=[],
@@ -145,41 +148,75 @@ class PortfolioService:
                 if data["total_balance"] > Decimal("0")
             }
 
-            # Concurrently resolve prices for held assets
-            async def resolve_price(sym: str) -> tuple[str, Optional[Decimal], bool]:
+            now = datetime.now(timezone.utc)
+
+            # Concurrently resolve prices with price provenance & safe staleness fallback
+            async def resolve_asset_price(sym: str) -> Tuple[str, Optional[Decimal], str, Optional[datetime]]:
+                """
+                Returns (symbol, price_decimal, price_status, price_as_of).
+                price_status: 'live', 'cached', 'stale', 'unavailable'
+                """
+                # 1. Base quote currency identity
                 if sym in ["USDT", "USD"]:
-                    return sym, Decimal("1.0"), True
+                    one_dec = Decimal("1.0")
+                    await global_cache.set(f"{CACHE_PREFIX_LAST_PRICE}{sym}", {"price": one_dec, "as_of": now}, ttl=3600.0)
+                    return sym, one_dec, "live", now
+
+                # 2. Attempt live price resolution from market provider
                 try:
                     ticker = await self.market_service.get_ticker(sym)
                     p_dec = parse_decimal(ticker.price, default="0")
                     if p_dec > Decimal("0"):
-                        return sym, p_dec, True
-                    return sym, None, False
-                except Exception:
-                    return sym, None, False
+                        # Save as last-known-good price in cache (1 hour retention)
+                        await global_cache.set(f"{CACHE_PREFIX_LAST_PRICE}{sym}", {"price": p_dec, "as_of": now}, ttl=3600.0)
+                        return sym, p_dec, "live", now
+                except Exception as e:
+                    logger.debug(f"Live ticker lookup failed for {sym}: {e}")
 
-            price_tasks = [resolve_price(sym) for sym in non_zero_assets.keys()]
+                # 3. If live lookup failed, check last-known-good price cache
+                cached_price_entry = await global_cache.get(f"{CACHE_PREFIX_LAST_PRICE}{sym}")
+                if cached_price_entry and isinstance(cached_price_entry, dict):
+                    cached_p = cached_price_entry.get("price")
+                    cached_as_of = cached_price_entry.get("as_of")
+                    if cached_p and cached_as_of:
+                        as_of_utc = cached_as_of if cached_as_of.tzinfo else cached_as_of.replace(tzinfo=timezone.utc)
+                        age_sec = (now - as_of_utc).total_seconds()
+                        if age_sec <= STALE_PRICE_MAX_AGE_SECONDS:
+                            logger.info(f"Using eligible last-known-good price for {sym} (age: {age_sec:.1f}s <= {STALE_PRICE_MAX_AGE_SECONDS}s)")
+                            return sym, parse_decimal(cached_p), "stale", as_of_utc
+
+                # 4. Price unavailable / expired
+                return sym, None, "unavailable", None
+
+            price_tasks = [resolve_asset_price(sym) for sym in non_zero_assets.keys()]
             price_results = await asyncio.gather(*price_tasks, return_exceptions=True)
 
-            prices_map: Dict[str, tuple[Optional[Decimal], bool]] = {}
+            prices_map: Dict[str, Tuple[Optional[Decimal], str, Optional[datetime]]] = {}
             for res in price_results:
-                if isinstance(res, tuple) and len(res) == 3:
-                    sym, p_dec, avail = res
-                    prices_map[sym] = (p_dec, avail)
+                if isinstance(res, tuple) and len(res) == 4:
+                    sym, p_dec, p_status, p_as_of = res
+                    prices_map[sym] = (p_dec, p_status, p_as_of)
 
             portfolio_assets: List[PortfolioAsset] = []
-            known_value_dec = Decimal("0")
+            total_portfolio_usdt = Decimal("0")
             unvalued_symbols: List[str] = []
+            stale_symbols: List[str] = []
             valued_count = 0
 
             for sym, asset_data in non_zero_assets.items():
-                price_usdt_dec, valuation_available = prices_map.get(sym, (None, False))
+                price_usdt_dec, price_status, price_as_of = prices_map.get(sym, (None, "unavailable", None))
 
                 est_val_usdt_dec: Optional[Decimal] = None
-                if valuation_available and price_usdt_dec is not None:
+                valuation_available = False
+
+                if price_usdt_dec is not None and price_status in ["live", "cached", "stale"]:
+                    # CRITICAL: Dynamically compute value using current balance * price
                     est_val_usdt_dec = asset_data["total_balance"] * price_usdt_dec
-                    known_value_dec += est_val_usdt_dec
+                    total_portfolio_usdt += est_val_usdt_dec
+                    valuation_available = True
                     valued_count += 1
+                    if price_status == "stale":
+                        stale_symbols.append(sym)
                 else:
                     unvalued_symbols.append(sym)
 
@@ -192,18 +229,20 @@ class PortfolioService:
                         frozen_balance=f"{asset_data['frozen_balance']:.8f}".rstrip('0').rstrip('.'),
                         account_sources=asset_data["account_sources"],
                         price_usdt=str(price_usdt_dec) if price_usdt_dec is not None else None,
+                        price_status=price_status,
+                        price_as_of=price_as_of,
                         estimated_value_usdt=f"{est_val_usdt_dec:.2f}" if est_val_usdt_dec is not None else None,
                         valuation_available=valuation_available,
                         allocation_pct=0.0
                     )
                 )
 
-            # Compute allocation percentages based on known value
-            if known_value_dec > Decimal("0"):
+            # Compute dynamic allocation percentages
+            if total_portfolio_usdt > Decimal("0"):
                 for asset in portfolio_assets:
                     if asset.estimated_value_usdt is not None:
                         val_dec = parse_decimal(asset.estimated_value_usdt)
-                        asset.allocation_pct = round(float((val_dec / known_value_dec) * Decimal("100")), 2)
+                        asset.allocation_pct = round(float((val_dec / total_portfolio_usdt) * Decimal("100")), 2)
 
             # Sort by estimated value descending (priced first, then by total balance)
             portfolio_assets.sort(
@@ -214,40 +253,41 @@ class PortfolioService:
                 reverse=True
             )
 
-            now = datetime.now(timezone.utc)
-            last_complete_snapshot: Optional[PortfolioSummary] = await global_cache.get(CACHE_KEY_LAST_COMPLETE)
-
-            # Valuation completeness determination
-            if len(unvalued_symbols) == 0:
-                # Complete Valuation
+            # Valuation Completeness Evaluation
+            if len(unvalued_symbols) == 0 and len(stale_symbols) == 0:
+                # 100% Live Complete Valuation
                 valuation_status = "complete"
                 valuation_complete = True
-                total_value_str = f"{known_value_dec:.2f}"
+                total_value_str = f"{total_portfolio_usdt:.2f}"
                 last_complete_time = now
                 last_complete_total = total_value_str
-            else:
+            elif len(unvalued_symbols) == 0 and len(stale_symbols) > 0:
+                # All assets priced, but one or more use eligible stale prices
+                valuation_status = "stale_complete"
                 valuation_complete = False
-                if last_complete_snapshot and last_complete_snapshot.valuation_complete:
-                    # Stale Complete Fallback
-                    valuation_status = "stale_complete"
-                    total_value_str = last_complete_snapshot.total_value_usdt
-                    last_complete_time = last_complete_snapshot.last_synced_at
-                    last_complete_total = last_complete_snapshot.total_value_usdt
-                else:
-                    # Partial Valuation
-                    valuation_status = "partial"
-                    total_value_str = f"{known_value_dec:.2f}"
-                    last_complete_time = None
-                    last_complete_total = None
+                total_value_str = f"{total_portfolio_usdt:.2f}"  # Dynamically computed with new current balances!
+                # Timestamp is the oldest stale price timestamp
+                stale_times = [a.price_as_of for a in portfolio_assets if a.price_status == "stale" and a.price_as_of]
+                last_complete_time = min(stale_times) if stale_times else now
+                last_complete_total = total_value_str
+            else:
+                # One or more assets cannot be priced
+                valuation_status = "partial"
+                valuation_complete = False
+                total_value_str = f"{total_portfolio_usdt:.2f}"
+                last_complete_time = None
+                last_complete_total = None
 
             summary = PortfolioSummary(
                 total_value_usdt=total_value_str,
-                known_value_usdt=f"{known_value_dec:.2f}",
+                known_value_usdt=f"{total_portfolio_usdt:.2f}",
                 valuation_status=valuation_status,
                 valuation_complete=valuation_complete,
                 valued_asset_count=valued_count,
                 unvalued_asset_count=len(unvalued_symbols),
                 unvalued_assets=unvalued_symbols,
+                stale_assets=stale_symbols,
+                stale_window_seconds=int(STALE_PRICE_MAX_AGE_SECONDS),
                 last_complete_valuation_at=last_complete_time,
                 last_complete_total_usdt=last_complete_total,
                 assets=portfolio_assets,
@@ -257,10 +297,6 @@ class PortfolioService:
                 data_status="configured",
                 error_message=None
             )
-
-            # Save complete snapshot separately if complete
-            if valuation_complete:
-                await global_cache.set(CACHE_KEY_LAST_COMPLETE, summary, ttl=3600.0)
 
             # Cache latest portfolio summary for 30 seconds
             await global_cache.set(CACHE_KEY_LATEST, summary, ttl=30.0)
@@ -276,6 +312,8 @@ class PortfolioService:
                 valued_asset_count=0,
                 unvalued_asset_count=0,
                 unvalued_assets=[],
+                stale_assets=[],
+                stale_window_seconds=int(STALE_PRICE_MAX_AGE_SECONDS),
                 last_complete_valuation_at=None,
                 last_complete_total_usdt=None,
                 assets=[],

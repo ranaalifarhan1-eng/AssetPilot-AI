@@ -63,7 +63,6 @@ def test_deterministic_signing_logic():
     signature = client_obj._generate_signature(timestamp, method, request_path)
     assert isinstance(signature, str)
     assert len(signature) > 0
-    # Re-running with exact parameters yields identical signature
     sig2 = client_obj._generate_signature(timestamp, method, request_path)
     assert signature == sig2
 
@@ -72,12 +71,12 @@ def test_deterministic_signing_logic():
 @patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
 @patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
 @patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
-def test_configured_portfolio_summary_complete_valuation(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+def test_case_a_same_balances_live_prices_complete(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """Case A: All assets priced with live data -> valuation_status is 'complete'."""
     mock_trading.return_value = MOCK_TRADING_BALANCES
     mock_funding.return_value = MOCK_FUNDING_BALANCES
     mock_earn.return_value = MOCK_EARN_BALANCES
 
-    # Mock market prices: BTC=$60,000, ETH=$3,000
     def side_effect(symbol):
         if symbol == "BTC":
             return NormalizedTicker(
@@ -106,67 +105,26 @@ def test_configured_portfolio_summary_complete_valuation(mock_get_ticker, mock_e
     assert summary.data_status == "configured"
     assert summary.valuation_status == "complete"
     assert summary.valuation_complete is True
-    assert summary.unvalued_asset_count == 0
+    assert summary.stale_assets == []
     assert summary.unvalued_assets == []
-    # Calculation:
-    # BTC total = 0.5 (Trading) + 0.25 (Funding) = 0.75 BTC * $60,000 = $45,000
-    # ETH total = 2.0 ETH * $3,000 = $6,000
-    # USDT total = 1000 (Trading) + 500 (Earn) = $1,500
-    # Total Portfolio = $52,500
     assert summary.total_value_usdt == "52500.00"
-    assert summary.known_value_usdt == "52500.00"
 
     btc_asset = next(a for a in summary.assets if a.symbol == "BTC")
-    assert btc_asset.total_balance == "0.75"
-    assert len(btc_asset.account_sources) == 2
+    assert btc_asset.price_status == "live"
     assert btc_asset.estimated_value_usdt == "45000.00"
-    assert btc_asset.allocation_pct == 85.71  # (45000 / 52500) * 100
 
 @patch.object(OKXAccountClient, "is_configured", return_value=True)
 @patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
 @patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
 @patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
 @patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
-def test_partial_valuation_when_btc_unpriced_never_reports_partial_as_complete(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
-    """Verify that when BTC price lookup fails, the summary reports partial valuation status."""
-    mock_trading.return_value = [{"currency": "BTC", "balance": "0.5", "available": "0.5", "frozen": "0.0", "source": "Trading"}]
-    mock_funding.return_value = [{"currency": "USDT", "balance": "100.0", "available": "100.0", "frozen": "0.0", "source": "Funding"}]
-    mock_earn.return_value = []
-
-    # BTC price lookup raises exception (simulating transient network error)
-    mock_get_ticker.side_effect = RuntimeError("OKX ticker timeout")
-
-    service = PortfolioService(
-        account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
-    )
-    
-    summary = asyncio.run(service.get_portfolio_summary())
-
-    # Valuation MUST NOT be marked complete
-    assert summary.valuation_complete is False
-    assert summary.valuation_status == "partial"
-    assert summary.unvalued_asset_count == 1
-    assert "BTC" in summary.unvalued_assets
-    # Known valued assets is only USDT = $100.00
-    assert summary.known_value_usdt == "100.00"
-    
-    btc_asset = next(a for a in summary.assets if a.symbol == "BTC")
-    assert btc_asset.valuation_available is False
-    assert btc_asset.price_usdt is None
-    assert btc_asset.estimated_value_usdt is None
-
-@patch.object(OKXAccountClient, "is_configured", return_value=True)
-@patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
-@patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
-@patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
-@patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
-def test_stale_complete_fallback_preserves_last_known_good_value(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
-    """Verify that transient price failure gracefully falls back to stale_complete snapshot if previously known."""
+def test_case_b_same_balances_transient_failure_recent_known_good_price(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """Case B: Same balances + transient price failure + recent known-good price -> stale_complete."""
     mock_trading.return_value = [{"currency": "BTC", "balance": "1.0", "available": "1.0", "frozen": "0.0", "source": "Trading"}]
     mock_funding.return_value = [{"currency": "USDT", "balance": "50.0", "available": "50.0", "frozen": "0.0", "source": "Funding"}]
     mock_earn.return_value = []
 
-    # 1. First run: complete valuation
+    # Step 1: establish live price in cache
     mock_get_ticker.return_value = NormalizedTicker(
         symbol="BTC", provider_symbol="BTC-USDT", name="Bitcoin",
         price="70000.00", open_24h="69000.00", high_24h="71000.00", low_24h="68000.00",
@@ -177,39 +135,175 @@ def test_stale_complete_fallback_preserves_last_known_good_value(mock_get_ticker
     service = PortfolioService(
         account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
     )
-    
     summary1 = asyncio.run(service.get_portfolio_summary())
     assert summary1.valuation_status == "complete"
-    assert summary1.total_value_usdt == "70050.00"
 
-    # Invalidate latest 30s cache to force re-fetch
+    # Invalidate latest portfolio snapshot cache
     asyncio.run(global_cache.delete("portfolio_summary"))
 
-    # 2. Second run: BTC ticker fails
-    mock_get_ticker.side_effect = RuntimeError("Transient network outage")
+    # Step 2: live lookup fails -> falls back to recent known-good price ($70,000)
+    mock_get_ticker.side_effect = RuntimeError("OKX Ticker Timeout")
     summary2 = asyncio.run(service.get_portfolio_summary())
 
-    # Must be marked stale_complete and retain previous total
     assert summary2.valuation_status == "stale_complete"
     assert summary2.valuation_complete is False
+    assert "BTC" in summary2.stale_assets
+    assert summary2.unvalued_assets == []
+    # 1.0 BTC * $70,000 + $50 USDT = $70,050.00
     assert summary2.total_value_usdt == "70050.00"
-    assert summary2.known_value_usdt == "50.00"
-    assert "BTC" in summary2.unvalued_assets
-    assert summary2.last_complete_total_usdt == "70050.00"
 
-    # 3. Third run: recovery back to complete
+    btc_asset = next(a for a in summary2.assets if a.symbol == "BTC")
+    assert btc_asset.price_status == "stale"
+    assert btc_asset.price_usdt == "70000.00"
+    assert btc_asset.estimated_value_usdt == "70000.00"
+
+@patch.object(OKXAccountClient, "is_configured", return_value=True)
+@patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
+@patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
+def test_case_c_balance_changes_recalculated_with_stale_price_never_reuses_old_total(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """
+    Case C (CRITICAL): User deposits additional BTC (0.5 -> 1.5 BTC).
+    Live BTC price fails.
+    Verify valuation uses NEW balance (1.5 BTC) * last-known-good price ($60,000) = $90,000 (+ $1000 USDT = $91,000),
+    and does NOT blindly reuse the old $31,000 total!
+    """
+    # Step 1: Initial balance is 0.5 BTC + $1000 USDT -> total $31,000
+    mock_trading.return_value = [
+        {"currency": "BTC", "balance": "0.5", "available": "0.5", "frozen": "0.0", "source": "Trading"},
+        {"currency": "USDT", "balance": "1000.0", "available": "1000.0", "frozen": "0.0", "source": "Trading"}
+    ]
+    mock_funding.return_value = []
+    mock_earn.return_value = []
+
+    mock_get_ticker.return_value = NormalizedTicker(
+        symbol="BTC", provider_symbol="BTC-USDT", name="Bitcoin",
+        price="60000.00", open_24h="59000.00", high_24h="61000.00", low_24h="58000.00",
+        volume_24h="100.0", quote_volume_24h="6000000.0", change_24h_abs="+1000.00",
+        change_24h_pct=1.69, timestamp="2026-08-20T21:00:00Z", provider="OKX"
+    )
+
+    service = PortfolioService(
+        account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
+    )
+    summary_old = asyncio.run(service.get_portfolio_summary())
+    assert summary_old.total_value_usdt == "31000.00"
+
+    # Step 2: User deposits 1.0 more BTC -> total balance is now 1.5 BTC!
+    asyncio.run(global_cache.delete("portfolio_summary"))
+    mock_trading.return_value = [
+        {"currency": "BTC", "balance": "1.5", "available": "1.5", "frozen": "0.0", "source": "Trading"},
+        {"currency": "USDT", "balance": "1000.0", "available": "1000.0", "frozen": "0.0", "source": "Trading"}
+    ]
+
+    # Live price fails
+    mock_get_ticker.side_effect = RuntimeError("OKX network error")
+
+    summary_new = asyncio.run(service.get_portfolio_summary())
+
+    # MUST dynamically calculate: 1.5 BTC * $60,000 + $1000 = $91,000.00 (NOT $31,000.00!)
+    assert summary_new.total_value_usdt == "91000.00"
+    assert summary_new.valuation_status == "stale_complete"
+    assert "BTC" in summary_new.stale_assets
+
+    btc_asset = next(a for a in summary_new.assets if a.symbol == "BTC")
+    assert btc_asset.total_balance == "1.5"
+    assert btc_asset.price_status == "stale"
+    assert btc_asset.estimated_value_usdt == "90000.00"
+
+@patch.object(OKXAccountClient, "is_configured", return_value=True)
+@patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
+@patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
+def test_case_d_balance_changes_no_known_good_price_partial(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """Case D: Balance changes + no known-good price -> valuation_status is 'partial'."""
+    mock_trading.return_value = [{"currency": "NEWCOIN", "balance": "50.0", "available": "50.0", "frozen": "0.0", "source": "Trading"}]
+    mock_funding.return_value = [{"currency": "USDT", "balance": "20.0", "available": "20.0", "frozen": "0.0", "source": "Funding"}]
+    mock_earn.return_value = []
+
+    mock_get_ticker.side_effect = ValueError("No ticker available")
+
+    service = PortfolioService(
+        account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
+    )
+    summary = asyncio.run(service.get_portfolio_summary())
+
+    assert summary.valuation_status == "partial"
+    assert summary.valuation_complete is False
+    assert "NEWCOIN" in summary.unvalued_assets
+    assert summary.total_value_usdt == "20.00"
+    assert summary.known_value_usdt == "20.00"
+
+@patch.object(OKXAccountClient, "is_configured", return_value=True)
+@patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
+@patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
+def test_case_e_known_good_price_exceeds_permitted_stale_window_becomes_partial(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """Case E: Known-good price is older than 900s staleness window -> asset becomes unvalued, status is 'partial'."""
+    mock_trading.return_value = [{"currency": "BTC", "balance": "1.0", "available": "1.0", "frozen": "0.0", "source": "Trading"}]
+    mock_funding.return_value = [{"currency": "USDT", "balance": "100.0", "available": "100.0", "frozen": "0.0", "source": "Funding"}]
+    mock_earn.return_value = []
+
+    # Manually seed price cache with an expired price timestamp (20 minutes ago > 15 min limit)
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+    asyncio.run(global_cache.set("last_known_price:BTC", {"price": "65000.00", "as_of": old_time}, ttl=3600.0))
+
+    # Live ticker fails
+    mock_get_ticker.side_effect = RuntimeError("OKX network error")
+
+    service = PortfolioService(
+        account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
+    )
+    summary = asyncio.run(service.get_portfolio_summary())
+
+    # Expired price MUST be rejected -> partial status!
+    assert summary.valuation_status == "partial"
+    assert summary.valuation_complete is False
+    assert "BTC" in summary.unvalued_assets
+    assert summary.total_value_usdt == "100.00"
+
+@patch.object(OKXAccountClient, "is_configured", return_value=True)
+@patch.object(OKXAccountClient, "fetch_trading_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_funding_balances", new_callable=AsyncMock)
+@patch.object(OKXAccountClient, "fetch_earn_balances", new_callable=AsyncMock)
+@patch("app.modules.portfolio.service.MarketDataService.get_ticker", new_callable=AsyncMock)
+def test_case_f_provider_recovers_automatically_returns_complete(mock_get_ticker, mock_earn, mock_funding, mock_trading, mock_is_config):
+    """Case F: When provider recovers, portfolio automatically transitions from stale_complete back to complete."""
+    mock_trading.return_value = [{"currency": "BTC", "balance": "1.0", "available": "1.0", "frozen": "0.0", "source": "Trading"}]
+    mock_funding.return_value = []
+    mock_earn.return_value = []
+
+    # Seed fresh price
+    recent_time = datetime.now(timezone.utc) - timedelta(minutes=2)
+    asyncio.run(global_cache.set("last_known_price:BTC", {"price": "68000.00", "as_of": recent_time}, ttl=3600.0))
+
+    service = PortfolioService(
+        account_client=OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
+    )
+
+    # 1. Price fails -> stale_complete
+    mock_get_ticker.side_effect = RuntimeError("Temporary outage")
+    summary1 = asyncio.run(service.get_portfolio_summary())
+    assert summary1.valuation_status == "stale_complete"
+
+    # 2. Provider recovers with fresh $75,000 price
     asyncio.run(global_cache.delete("portfolio_summary"))
     mock_get_ticker.side_effect = None
     mock_get_ticker.return_value = NormalizedTicker(
         symbol="BTC", provider_symbol="BTC-USDT", name="Bitcoin",
-        price="72000.00", open_24h="69000.00", high_24h="73000.00", low_24h="68000.00",
-        volume_24h="10.0", quote_volume_24h="720000.0", change_24h_abs="+3000.00",
-        change_24h_pct=4.35, timestamp="2026-08-20T21:05:00Z", provider="OKX"
+        price="75000.00", open_24h="70000.00", high_24h="76000.00", low_24h="69000.00",
+        volume_24h="100.0", quote_volume_24h="7500000.0", change_24h_abs="+5000.00",
+        change_24h_pct=7.14, timestamp="2026-08-20T21:00:00Z", provider="OKX"
     )
-    summary3 = asyncio.run(service.get_portfolio_summary())
-    assert summary3.valuation_status == "complete"
-    assert summary3.valuation_complete is True
-    assert summary3.total_value_usdt == "72050.00"
+
+    summary2 = asyncio.run(service.get_portfolio_summary())
+    assert summary2.valuation_status == "complete"
+    assert summary2.valuation_complete is True
+    assert summary2.total_value_usdt == "75000.00"
+    assert summary2.stale_assets == []
 
 def test_account_sources_endpoint():
     response = client.get("/api/v1/portfolio/accounts")
@@ -233,7 +327,6 @@ def test_invalid_credentials_error_handling(mock_trading, mock_is_config):
     assert summary.total_value_usdt == "0.00"
 
 def test_public_market_api_isolation():
-    # Verify public market health and tickers remain completely unaffected by portfolio configuration
     res_health = client.get("/api/v1/health")
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "ok"

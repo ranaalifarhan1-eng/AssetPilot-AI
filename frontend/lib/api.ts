@@ -135,6 +135,8 @@ export interface PortfolioAsset {
   frozen_balance: string;
   account_sources: AccountSourceBalance[];
   price_usdt: string | null;
+  price_status: 'live' | 'cached' | 'stale' | 'unavailable';
+  price_as_of: string | null;
   estimated_value_usdt: string | null;
   valuation_available: boolean;
   allocation_pct: number;
@@ -148,6 +150,8 @@ export interface PortfolioSummary {
   valued_asset_count: number;
   unvalued_asset_count: number;
   unvalued_assets: string[];
+  stale_assets: string[];
+  stale_window_seconds: number;
   last_complete_valuation_at: string | null;
   last_complete_total_usdt: string | null;
   assets: PortfolioAsset[];
