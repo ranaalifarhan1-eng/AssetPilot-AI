@@ -1,14 +1,39 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+from contextlib import asynccontextmanager
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.health import router as health_router
-from app.api.v1.markets import router as markets_router
-from app.api.v1.portfolio import router as portfolio_router
+from app.api.v1.markets import router as markets_router, market_service
+from app.api.v1.portfolio import router as portfolio_router, portfolio_service
 from app.api.v1.news import router as news_router
 from app.api.v1.macro import router as macro_router
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Own reusable provider connections within the active application event loop."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(12.0),
+        limits=httpx.Limits(max_connections=30, max_keepalive_connections=15),
+        headers={"User-Agent": "AssetPilot-AI/0.1"},
+        follow_redirects=True,
+    ) as provider_client:
+        market_service.crypto_provider._custom_client = provider_client
+        market_service.equity_provider._custom_client = provider_client
+        market_service.tokenized_provider._custom_client = provider_client
+        portfolio_service.account_client._custom_client = provider_client
+        portfolio_service.market_service.crypto_provider._custom_client = provider_client
+        try:
+            yield
+        finally:
+            market_service.crypto_provider._custom_client = None
+            market_service.equity_provider._custom_client = None
+            market_service.tokenized_provider._custom_client = None
+            portfolio_service.account_client._custom_client = None
+            portfolio_service.market_service.crypto_provider._custom_client = None
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -17,6 +42,7 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc",
+    lifespan=lifespan,
 )
 
 # Configure CORS for local development origins

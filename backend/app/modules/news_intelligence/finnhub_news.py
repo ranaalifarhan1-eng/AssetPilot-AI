@@ -46,17 +46,24 @@ class FinnhubNewsProvider(BaseNewsProvider):
         articles: List[NewsArticle] = []
         categories = ["general", "crypto"]
 
-        for cat in categories:
+        async def fetch_category(cat: str) -> List[NewsArticle]:
             url = f"{self.BASE_URL}/news?category={cat}&token={self.api_key}"
             try:
                 data = await self._fetch_json(url)
+                category_articles: List[NewsArticle] = []
                 if isinstance(data, list):
                     for item in data[:limit]:
                         article = self._normalize_item(item, source_category=cat)
                         if article:
-                            articles.append(article)
+                            category_articles.append(article)
+                return category_articles
             except Exception as e:
                 logger.warning(f"Finnhub fetch error for category '{cat}': {e}")
+                return []
+
+        results = await asyncio.gather(*(fetch_category(cat) for cat in categories))
+        for result in results:
+            articles.extend(result)
 
         return articles
 

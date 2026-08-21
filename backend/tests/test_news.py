@@ -242,6 +242,7 @@ async def test_news_service_portfolio_relevance():
     mock_port_service.get_portfolio_summary.return_value = mock_portfolio_summary
 
     service = NewsService(providers=[mock_provider], portfolio_service=mock_port_service)
+    await global_cache.set("portfolio_held_symbols", ["BTC"], ttl=60)
     res = await service.get_news(portfolio_only=True)
 
     assert res.total_count == 1

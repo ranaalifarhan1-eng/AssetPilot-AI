@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.modules.portfolio.schemas import RawAccountBalance
+from app.modules.portfolio.schemas import RawAccountBalance, AccountSourceResult
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class OKXAccountClient:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         passphrase: Optional[str] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
         timeout: float = 10.0,
         max_retries: int = 2
     ):
@@ -34,6 +35,7 @@ class OKXAccountClient:
         self.passphrase = passphrase if passphrase is not None else os.getenv("OKX_API_PASSPHRASE", "")
         self.timeout = timeout
         self.max_retries = max_retries
+        self._custom_client = http_client
         self._default_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "application/json"
@@ -116,10 +118,10 @@ class OKXAccountClient:
             logger.error(f"Error parsing OKX Funding balance response: {e}")
             raise RuntimeError(f"Failed to parse Funding account response: {str(e)}")
 
-    async def fetch_earn_balances(self) -> List[RawAccountBalance]:
+    async def fetch_earn_balances(self) -> AccountSourceResult:
         """Fetch balances from Simple Earn (Savings) via GET /api/v5/finance/savings/balance."""
         if not self.is_configured():
-            return []
+            return AccountSourceResult(status="not_configured")
 
         request_path = "/api/v5/finance/savings/balance"
         try:
@@ -139,10 +141,13 @@ class OKXAccountClient:
                             source="Earn"
                         )
                     )
-            return raw_balances
+            return AccountSourceResult(
+                balances=raw_balances,
+                status="available" if raw_balances else "empty",
+            )
         except Exception as e:
             logger.debug(f"OKX Earn balance query skipped or unavailable: {e}")
-            return []
+            return AccountSourceResult(status="unavailable")
 
     def _generate_signature(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
         """Create HMAC-SHA256 signature for OKX API authentication."""
@@ -173,7 +178,8 @@ class OKXAccountClient:
                     "OK-ACCESS-PASSPHRASE": self.passphrase,
                 }
                 
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                client = self._custom_client or httpx.AsyncClient(timeout=self.timeout)
+                try:
                     try:
                         resp = await client.get(url, headers=headers)
                         resp.raise_for_status()
@@ -188,5 +194,8 @@ class OKXAccountClient:
                         logger.debug(f"OKX authenticated GET attempt {attempt}/{self.max_retries} failed for {request_path} on {base_url}: {e}")
                         if attempt < self.max_retries:
                             await asyncio.sleep(0.3 * attempt)
+                finally:
+                    if self._custom_client is None:
+                        await client.aclose()
 
         raise RuntimeError(f"Network error connecting to OKX account API after {self.max_retries} attempts: {str(last_exception)}")

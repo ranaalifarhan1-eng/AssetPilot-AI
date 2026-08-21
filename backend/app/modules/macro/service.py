@@ -65,6 +65,9 @@ class MacroService:
     async def _get_held_symbols(self) -> List[str]:
         """Reads user's currently held symbols from the portfolio cache safely."""
         try:
+            cached_symbols = await global_cache.get("portfolio_held_symbols")
+            if cached_symbols:
+                return [str(symbol).upper() for symbol in cached_symbols]
             cached_portfolio = await global_cache.get("portfolio_summary")
             if cached_portfolio and hasattr(cached_portfolio, "assets"):
                 return [a.symbol for a in cached_portfolio.assets if float(a.total_balance or "0") > 0]

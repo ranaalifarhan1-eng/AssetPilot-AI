@@ -129,18 +129,16 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
             raise ProviderUnavailableError(self.provider_name, f"Failed to parse ticker data for {symbol}")
 
     async def get_tickers(self, symbols: List[str]) -> List[NormalizedTicker]:
-        """Fetch tickers concurrently for all symbols"""
-        tasks = [self.get_ticker(s) for s in symbols if s.upper() in SUPPORTED_ASSETS_MAP]
-        if not tasks:
+        """Fetch supported overview tickers with one OKX bulk request."""
+        wanted = {s.upper() for s in symbols if s.upper() in SUPPORTED_ASSETS_MAP}
+        if not wanted:
             return []
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        tickers: List[NormalizedTicker] = []
-        for res in results:
-            if isinstance(res, NormalizedTicker):
-                tickers.append(res)
-            elif isinstance(res, Exception):
-                logger.warning(f"Error fetching ticker in get_tickers: {res}")
-        return tickers
+        data = await self._fetch_okx_json(f"{self.BASE_URL}/tickers?instType=SPOT")
+        rows = {row.get("instId"): row for row in data.get("data", [])}
+        return [
+            self._normalize_ticker(SUPPORTED_ASSETS_MAP[sym], rows[SUPPORTED_ASSETS_MAP[sym].provider_symbol])
+            for sym in wanted if SUPPORTED_ASSETS_MAP[sym].provider_symbol in rows
+        ]
 
     async def get_candles(self, symbol: str, timeframe: str = "1H", limit: int = 100) -> List[NormalizedCandle]:
         symbol_upper = symbol.upper()
@@ -175,7 +173,9 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
         for endpoint_url in endpoints:
             for attempt in range(1, self._max_retries + 1):
                 try:
-                    async with httpx.AsyncClient(timeout=self._timeout, headers=self._default_headers) as client:
+                    client = await self._get_client()
+                    should_close = self._custom_client is None
+                    try:
                         resp = await client.get(endpoint_url)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -191,6 +191,9 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
                             raise InvalidAssetError(endpoint_url)
                         else:
                             raise ProviderUnavailableError(self.provider_name, f"HTTP {resp.status_code}")
+                    finally:
+                        if should_close:
+                            await client.aclose()
                 except (InvalidAssetError, InvalidTimeframeError):
                     raise
                 except httpx.TimeoutException as e:

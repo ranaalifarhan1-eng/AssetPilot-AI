@@ -21,6 +21,38 @@ from app.modules.market_data.service import MarketDataService
 
 client = TestClient(app)
 
+def test_us_market_session_dst_and_weekend():
+    provider = FinnhubEquityProvider(api_key="test-key")
+    assert provider.get_us_market_state(datetime(2026, 7, 6, 13, 30, tzinfo=timezone.utc)) == "open"
+    assert provider.get_us_market_state(datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc)) == "open"
+    assert provider.get_us_market_state(datetime(2026, 7, 5, 15, 0, tzinfo=timezone.utc)) == "closed"
+
+@pytest.mark.asyncio
+async def test_finnhub_429_retry_after_is_bounded_and_safe():
+    rate_limited = MagicMock(status_code=429, headers={"Retry-After": "0"})
+    client_mock = AsyncMock()
+    client_mock.get.return_value = rate_limited
+    provider = FinnhubEquityProvider(api_key="test-key", http_client=client_mock)
+    quote = await provider.get_quote("AAPL")
+    assert quote.data_status == "unavailable"
+    assert client_mock.get.await_count == 1
+
+@pytest.mark.asyncio
+async def test_tokenized_bulk_quotes_use_one_request():
+    client_mock = AsyncMock()
+    provider = OKXTokenizedStocksProvider(http_client=client_mock)
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"data": [{
+        "instId": "XAAPL-USDT", "last": "200", "open24h": "198", "high24h": "201",
+        "low24h": "197", "vol24h": "10", "volCcy24h": "2000", "ts": "1780000000000"
+    }]}
+    client_mock.get.return_value = response
+    quotes = await provider.get_tokenized_quotes(["xAAPL"])
+    assert len(quotes) == 1
+    assert quotes[0].provider_symbol == "XAAPL-USDT"
+    assert client_mock.get.await_count == 1
+
 def test_asset_taxonomy_classification():
     """Verify core asset categories and enum values"""
     assert AssetCategory.CRYPTO.value == "crypto"

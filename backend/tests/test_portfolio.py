@@ -7,9 +7,11 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.modules.portfolio.okx_account import OKXAccountClient
 from app.modules.portfolio.service import PortfolioService
-from app.modules.portfolio.schemas import PortfolioSummary, PortfolioAsset
+from app.modules.portfolio.schemas import PortfolioSummary, PortfolioAsset, AccountSourceResult
 from app.modules.market_data.schemas import NormalizedTicker
 from app.modules.market_data.cache import global_cache
+from app.modules.market_data.cache import MarketDataCache
+from app.modules.market_data.service import MarketDataService
 
 client = TestClient(app)
 
@@ -357,3 +359,56 @@ def test_public_market_api_isolation():
     res_health = client.get("/api/v1/health")
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "ok"
+
+@pytest.mark.asyncio
+async def test_earn_empty_and_unavailable_are_distinct():
+    account = OKXAccountClient(api_key="k", api_secret="s", passphrase="p")
+    account._authenticated_get = AsyncMock(return_value={"data": []})
+    empty = await account.fetch_earn_balances()
+    assert empty.status == "empty"
+    account._authenticated_get = AsyncMock(side_effect=RuntimeError("provider down"))
+    unavailable = await account.fetch_earn_balances()
+    assert unavailable.status == "unavailable"
+
+@pytest.mark.asyncio
+async def test_trading_funding_success_survives_earn_failure():
+    account = MagicMock()
+    account.is_configured.return_value = True
+    account.fetch_trading_balances = AsyncMock(return_value=[
+        {"currency": "USDT", "balance": "10", "available": "10", "frozen": "0", "source": "Trading"}
+    ])
+    account.fetch_funding_balances = AsyncMock(return_value=[])
+    account.fetch_earn_balances = AsyncMock(return_value=AccountSourceResult(status="unavailable"))
+    service = PortfolioService(account_client=account)
+    summary = await service.get_portfolio_summary()
+    assert summary.total_value_usdt == "10.00"
+    assert summary.source_statuses == {"trading": "available", "funding": "empty", "earn": "unavailable"}
+    assert service.get_status().connection_status == "connected"
+
+@pytest.mark.asyncio
+async def test_changed_balance_revalues_during_market_cache_hit():
+    account = MagicMock()
+    account.is_configured.return_value = True
+    account.fetch_trading_balances = AsyncMock(side_effect=[
+        [{"currency": "BTC", "balance": "1", "available": "1", "frozen": "0", "source": "Trading"}],
+        [{"currency": "BTC", "balance": "2", "available": "2", "frozen": "0", "source": "Trading"}],
+    ])
+    account.fetch_funding_balances = AsyncMock(return_value=[])
+    account.fetch_earn_balances = AsyncMock(return_value=AccountSourceResult(status="empty"))
+    provider = AsyncMock()
+    provider.get_ticker.return_value = NormalizedTicker(
+        symbol="BTC", provider_symbol="BTC-USDT", name="Bitcoin", price="60000",
+        open_24h="59000", high_24h="61000", low_24h="58000", volume_24h="1",
+        quote_volume_24h="60000", change_24h_abs="1000", change_24h_pct=1.69,
+        timestamp=datetime.now(timezone.utc), provider="OKX", data_status="live",
+    )
+    market = MarketDataService(crypto_provider=provider, cache=MarketDataCache())
+    service = PortfolioService(account_client=account, market_service=market)
+    first = await service.get_portfolio_summary()
+    second = await service.get_portfolio_summary()
+    assert first.total_value_usdt == "60000.00"
+    assert second.total_value_usdt == "120000.00"
+    assert second.assets[0].price_status == "cached"
+    assert second.valuation_status == "cached_complete"
+    assert second.valuation_complete is False
+    assert provider.get_ticker.await_count == 1

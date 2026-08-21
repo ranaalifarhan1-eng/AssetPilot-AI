@@ -10,6 +10,7 @@ from app.modules.market_data.schemas import NormalizedTicker, NormalizedCandle, 
 from app.modules.market_data.exceptions import InvalidAssetError, InvalidTimeframeError, ProviderUnavailableError
 from app.modules.market_data.cache import MarketDataCache, global_cache
 from app.modules.market_data.service import MarketDataService
+from app.api.v1.markets import market_service
 
 client = TestClient(app)
 
@@ -122,3 +123,25 @@ async def test_in_memory_ttl_cache():
     await asyncio.sleep(0.15)
     res_expired = await cache.get("test_key")
     assert res_expired is None
+
+@pytest.mark.asyncio
+async def test_cached_ticker_provenance_is_not_live():
+    provider = AsyncMock()
+    provider.get_ticker.return_value = NormalizedTicker(
+        symbol="BTC", provider_symbol="BTC-USDT", name="Bitcoin", price="60000",
+        open_24h="59000", high_24h="61000", low_24h="58000", volume_24h="1",
+        quote_volume_24h="60000", change_24h_abs="1000", change_24h_pct=1.69,
+        timestamp=datetime.now(timezone.utc), provider="OKX", data_status="live"
+    )
+    service = MarketDataService(crypto_provider=provider, cache=MarketDataCache())
+    first = await service.get_ticker("BTC")
+    second = await service.get_ticker("BTC")
+    assert first.data_status == "live"
+    assert second.data_status == "cached"
+    assert provider.get_ticker.await_count == 1
+
+def test_lifespan_shared_client_is_cleaned_up():
+    with TestClient(app) as scoped_client:
+        assert scoped_client.get("/api/v1/health").status_code == 200
+        assert market_service.crypto_provider._custom_client is not None
+    assert market_service.crypto_provider._custom_client is None

@@ -235,15 +235,58 @@ class OKXTokenizedStocksProvider:
         )
 
     async def get_tokenized_quotes(self, symbols: Optional[List[str]] = None) -> List[NormalizedTokenizedEquityQuote]:
-        """Fetch quotes concurrently for all discovered or requested tokenized stocks"""
+        """Fetch discovered xStock quotes in one OKX bulk-ticker request."""
         if not symbols:
             instruments = await self.discover_tokenized_instruments()
             symbols = [item.symbol for item in instruments]
+        wanted = {s.upper().removeprefix("X") for s in symbols}
 
-        tasks = [self.get_tokenized_quote(s) for s in symbols]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        quotes = []
-        for r in results:
-            if isinstance(r, NormalizedTokenizedEquityQuote):
-                quotes.append(r)
-        return quotes
+        for base_url in self.BASE_URLS:
+            url = f"{base_url}/market/tickers?instType=SPOT"
+            for attempt in range(1, self._max_retries + 1):
+                client = await self._get_client()
+                should_close = self._custom_client is None
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    rows = resp.json().get("data", [])
+                    quotes = []
+                    for raw in rows:
+                        inst_id = raw.get("instId", "")
+                        if not (inst_id.startswith("X") and inst_id.endswith("-USDT")):
+                            continue
+                        underlying = inst_id.split("-", 1)[0][1:]
+                        if underlying not in wanted or underlying not in RECOGNIZED_UNDERLYING_MAP:
+                            continue
+                        quotes.append(self._normalize_quote(underlying, inst_id, raw))
+                    return quotes
+                except Exception as e:
+                    logger.debug(f"Attempt {attempt} fetching OKX bulk tickers from {base_url} failed: {e}")
+                    if attempt < self._max_retries:
+                        await asyncio.sleep(0.3 * attempt)
+                finally:
+                    if should_close:
+                        await client.aclose()
+
+        # Preserve per-symbol unavailable semantics after a bulk-provider failure.
+        return [await self.get_tokenized_quote(s) for s in symbols]
+
+    def _normalize_quote(self, underlying_sym: str, inst_id: str, raw: Dict[str, Any]) -> NormalizedTokenizedEquityQuote:
+        comp_name = RECOGNIZED_UNDERLYING_MAP[underlying_sym]
+        last_price = raw.get("last", "0")
+        open_24h = raw.get("open24h", "0")
+        last_flt = float(last_price)
+        open_flt = float(open_24h)
+        change_abs = last_flt - open_flt
+        change_pct = (change_abs / open_flt * 100.0) if open_flt > 0 else 0.0
+        ts_ms = int(raw.get("ts", datetime.now(timezone.utc).timestamp() * 1000))
+        return NormalizedTokenizedEquityQuote(
+            symbol=f"x{underlying_sym}", display_symbol=f"x{underlying_sym}/USDT",
+            name=f"x{underlying_sym} ({comp_name})", provider_symbol=inst_id,
+            underlying_symbol=underlying_sym, underlying_name=comp_name,
+            price=str(last_price), open_24h=str(open_24h), high_24h=str(raw.get("high24h", "0")),
+            low_24h=str(raw.get("low24h", "0")), volume_24h=str(raw.get("vol24h", "0")),
+            quote_volume_24h=str(raw.get("volCcy24h", "0")), change_24h_abs=f"{change_abs:+.2f}",
+            change_24h_pct=round(change_pct, 2), timestamp=datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc),
+            data_status="live"
+        )

@@ -195,10 +195,8 @@ class NewsService:
         # Retrieve held portfolio asset symbols for portfolio relevance tagging
         held_symbols: set[str] = set()
         try:
-            summary = await self.portfolio_service.get_portfolio_summary()
-            if summary and summary.assets:
-                for a in summary.assets:
-                    held_symbols.add(a.symbol.upper())
+            cached_symbols = await global_cache.get("portfolio_held_symbols") or []
+            held_symbols.update(str(symbol).upper() for symbol in cached_symbols)
         except Exception as e:
             logger.debug(f"Could not load portfolio holdings for news mapping: {e}")
 

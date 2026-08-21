@@ -3,7 +3,9 @@ import os
 import logging
 import asyncio
 from typing import List, Dict, Optional, Any
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+import calendar
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from dotenv import load_dotenv
 
@@ -56,18 +58,50 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
     def is_configured(self) -> bool:
         return bool(self.api_key and len(self.api_key) > 4)
 
-    def is_us_market_open(self) -> bool:
-        """Determine if US stock exchanges (NYSE/NASDAQ) are open (Monday-Friday 13:30-20:00 UTC)"""
-        now_utc = datetime.now(timezone.utc)
-        # Weekday: Monday is 0 and Sunday is 6
-        if now_utc.weekday() >= 5:
-            return False
-        
-        market_open_min = 13 * 60 + 30 # 13:30 UTC
-        market_close_min = 20 * 60     # 20:00 UTC
-        curr_min = now_utc.hour * 60 + now_utc.minute
+    def get_us_market_state(self, at: Optional[datetime] = None) -> str:
+        """Deterministic regular-session state using New York time and major full-day holidays."""
+        instant = at or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            return "unknown"
+        eastern = instant.astimezone(ZoneInfo("America/New_York"))
+        if eastern.weekday() >= 5 or eastern.date() in self._market_holidays(eastern.year):
+            return "closed"
+        return "open" if time(9, 30) <= eastern.time().replace(tzinfo=None) < time(16, 0) else "closed"
 
-        return market_open_min <= curr_min < market_close_min
+    def is_us_market_open(self) -> bool:
+        return self.get_us_market_state() == "open"
+
+    @staticmethod
+    def _market_holidays(year: int) -> set[date]:
+        def observed(day: date) -> date:
+            if day.weekday() == 5:
+                return day - timedelta(days=1)
+            if day.weekday() == 6:
+                return day + timedelta(days=1)
+            return day
+        def nth_weekday(month: int, weekday: int, n: int) -> date:
+            first = date(year, month, 1)
+            return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+        def last_weekday(month: int, weekday: int) -> date:
+            last = date(year, month, calendar.monthrange(year, month)[1])
+            return last - timedelta(days=(last.weekday() - weekday) % 7)
+        # Anonymous Gregorian computus; NYSE Good Friday is two days before Easter.
+        a, b, c = year % 19, year // 100, year % 100
+        d, e = b // 4, b % 4
+        f, g = (b + 8) // 25, (b - (b + 8) // 25 + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i, k = c // 4, c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        easter_month = (h + l - 7 * m + 114) // 31
+        easter_day = (h + l - 7 * m + 114) % 31 + 1
+        good_friday = date(year, easter_month, easter_day) - timedelta(days=2)
+        return {
+            observed(date(year, 1, 1)), nth_weekday(1, 0, 3), nth_weekday(2, 0, 3),
+            good_friday, last_weekday(5, 0), observed(date(year, 6, 19)),
+            observed(date(year, 7, 4)), nth_weekday(9, 0, 1), nth_weekday(11, 3, 4),
+            observed(date(year, 12, 25)),
+        }
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._custom_client:
@@ -76,8 +110,7 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
 
     async def get_supported_equities(self) -> List[AssetInfo]:
         assets: List[AssetInfo] = []
-        is_open = self.is_us_market_open()
-        market_status = "open" if is_open else "closed"
+        market_status = self.get_us_market_state()
 
         for sym, name in SUPPORTED_EQUITIES_MAP.items():
             assets.append(
@@ -104,8 +137,7 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
             raise InvalidAssetError(symbol)
 
         comp_name = SUPPORTED_EQUITIES_MAP[sym_upper]
-        is_open = self.is_us_market_open()
-        market_state = "open" if is_open else "closed"
+        market_state = self.get_us_market_state()
 
         # If Finnhub is not configured, return clear provider_not_configured status with zero fake prices
         if not self.is_configured:
@@ -135,9 +167,21 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
             client = await self._get_client()
             should_close = self._custom_client is None
             try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                data = resp.json()
+                for attempt in range(2):
+                    resp = await client.get(url)
+                    if resp.status_code != 429:
+                        resp.raise_for_status()
+                        data = resp.json()
+                        break
+                    retry_after = resp.headers.get("Retry-After", "0")
+                    try:
+                        delay = max(0.0, min(float(retry_after), 2.0))
+                    except ValueError:
+                        delay = 0.0
+                    if attempt == 0 and delay > 0:
+                        await asyncio.sleep(delay)
+                        continue
+                    raise ProviderUnavailableError(self.provider_name, "Rate limited by Finnhub")
             finally:
                 if should_close:
                     await client.aclose()
@@ -198,8 +242,13 @@ class FinnhubEquityProvider(BaseEquityMarketDataProvider):
             )
 
     async def get_quotes(self, symbols: List[str]) -> List[NormalizedEquityQuote]:
-        tasks = [self.get_quote(s) for s in symbols if s.upper() in SUPPORTED_EQUITIES_MAP]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        valid_symbols = [s for s in symbols if s.upper() in SUPPORTED_EQUITIES_MAP]
+        if self._custom_client:
+            results = await asyncio.gather(*(self.get_quote(s) for s in valid_symbols), return_exceptions=True)
+        else:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                pooled = FinnhubEquityProvider(api_key=self.api_key, http_client=client, timeout=self._timeout)
+                results = await asyncio.gather(*(pooled.get_quote(s) for s in valid_symbols), return_exceptions=True)
         quotes = []
         for r in results:
             if isinstance(r, NormalizedEquityQuote):

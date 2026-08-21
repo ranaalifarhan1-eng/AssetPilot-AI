@@ -11,6 +11,7 @@ from app.modules.portfolio.schemas import (
     AccountSourceBalance,
     PortfolioStatusResponse,
     RawAccountBalance,
+    AccountSourceResult,
 )
 from app.modules.market_data.service import MarketDataService
 from app.modules.market_data.cache import global_cache
@@ -46,6 +47,8 @@ class PortfolioService:
     def __init__(self, account_client: Optional[OKXAccountClient] = None, market_service: Optional[MarketDataService] = None):
         self.account_client = account_client or OKXAccountClient()
         self.market_service = market_service or MarketDataService()
+        self._last_successful_sync: Optional[datetime] = None
+        self._connection_verified = False
 
     def get_status(self) -> PortfolioStatusResponse:
         is_config = self.account_client.is_configured() if callable(self.account_client.is_configured) else bool(self.account_client.is_configured)
@@ -53,8 +56,8 @@ class PortfolioService:
             configured=is_config,
             provider="OKX",
             read_only_expected=True,
-            last_successful_sync=None,
-            connection_status="configured_unverified" if is_config else "unconfigured"
+            last_successful_sync=self._last_successful_sync,
+            connection_status=("connected" if self._connection_verified else "configured_unverified") if is_config else "unconfigured"
         )
 
     async def get_portfolio_summary(self) -> PortfolioSummary:
@@ -77,17 +80,42 @@ class PortfolioService:
                 last_synced_at=None,
                 provider="OKX",
                 data_status="unconfigured",
-                error_message="OKX read-only API credentials not configured in backend environment."
+                error_message="OKX read-only API credentials not configured in backend environment.",
+                source_statuses={"trading": "not_configured", "funding": "not_configured", "earn": "not_configured"},
             )
 
         try:
             # Concurrently fetch Trading, Funding, and Earn balances
-            trading_raw, funding_raw, earn_raw = await asyncio.gather(
+            source_results = await asyncio.gather(
                 self.account_client.fetch_trading_balances(),
                 self.account_client.fetch_funding_balances(),
                 self.account_client.fetch_earn_balances(),
-                return_exceptions=False
+                return_exceptions=True
             )
+
+            normalized_sources: Dict[str, List[RawAccountBalance]] = {}
+            source_statuses: Dict[str, str] = {}
+            for source_name, result in zip(("trading", "funding", "earn"), source_results):
+                if isinstance(result, Exception):
+                    normalized_sources[source_name] = []
+                    source_statuses[source_name] = "error" if source_name in ("trading", "funding") else "unavailable"
+                elif isinstance(result, AccountSourceResult):
+                    normalized_sources[source_name] = result.balances
+                    source_statuses[source_name] = result.status
+                else:
+                    normalized_sources[source_name] = result
+                    source_statuses[source_name] = "available" if result else "empty"
+
+            if source_statuses["trading"] in ("available", "empty") or source_statuses["funding"] in ("available", "empty"):
+                self._connection_verified = True
+                self._last_successful_sync = datetime.now(timezone.utc)
+
+            if source_statuses["trading"] == "error" and source_statuses["funding"] == "error":
+                raise RuntimeError("Both required OKX balance sources failed")
+
+            trading_raw = normalized_sources["trading"]
+            funding_raw = normalized_sources["funding"]
+            earn_raw = normalized_sources["earn"]
 
             all_raw = trading_raw + funding_raw + earn_raw
             merged: Dict[str, Dict] = {}
@@ -142,6 +170,8 @@ class PortfolioService:
                 sym: data for sym, data in merged.items()
                 if data["total_balance"] > Decimal("0")
             }
+            # Auxiliary relevance cache only; never used for valuation or portfolio responses.
+            await global_cache.set("portfolio_held_symbols", sorted(non_zero_assets.keys()), ttl=60.0)
 
             now = datetime.now(timezone.utc)
 
@@ -164,7 +194,8 @@ class PortfolioService:
                     if p_dec > Decimal("0"):
                         # Save as last-known-good price in cache (1 hour retention)
                         await global_cache.set(f"{CACHE_PREFIX_LAST_PRICE}{sym}", {"price": p_dec, "as_of": now}, ttl=3600.0)
-                        return sym, p_dec, "live", now
+                        observation_status = "cached" if getattr(ticker, "data_status", "live") == "cached" else "live"
+                        return sym, p_dec, observation_status, now
                 except Exception as e:
                     logger.debug(f"Live ticker lookup failed for {sym}: {e}")
 
@@ -196,6 +227,7 @@ class PortfolioService:
             total_portfolio_usdt = Decimal("0")
             unvalued_symbols: List[str] = []
             stale_symbols: List[str] = []
+            cached_symbols: List[str] = []
             valued_count = 0
 
             for sym, asset_data in non_zero_assets.items():
@@ -212,6 +244,8 @@ class PortfolioService:
                     valued_count += 1
                     if price_status == "stale":
                         stale_symbols.append(sym)
+                    elif price_status == "cached":
+                        cached_symbols.append(sym)
                 else:
                     unvalued_symbols.append(sym)
 
@@ -249,7 +283,7 @@ class PortfolioService:
             )
 
             # Valuation Completeness Evaluation
-            if len(unvalued_symbols) == 0 and len(stale_symbols) == 0:
+            if len(unvalued_symbols) == 0 and len(stale_symbols) == 0 and len(cached_symbols) == 0:
                 # 100% Live Complete Valuation
                 valuation_status = "complete"
                 valuation_complete = True
@@ -265,6 +299,12 @@ class PortfolioService:
                 stale_times = [a.price_as_of for a in portfolio_assets if a.price_status == "stale" and a.price_as_of]
                 last_complete_time = min(stale_times) if stale_times else now
                 last_complete_total = total_value_str
+            elif len(unvalued_symbols) == 0:
+                valuation_status = "cached_complete"
+                valuation_complete = False
+                total_value_str = f"{total_portfolio_usdt:.2f}"
+                last_complete_time = None
+                last_complete_total = None
             else:
                 # One or more assets cannot be priced
                 valuation_status = "partial"
@@ -282,6 +322,7 @@ class PortfolioService:
                 unvalued_asset_count=len(unvalued_symbols),
                 unvalued_assets=unvalued_symbols,
                 stale_assets=stale_symbols,
+                cached_assets=cached_symbols,
                 stale_window_seconds=int(STALE_PRICE_MAX_AGE_SECONDS),
                 last_complete_valuation_at=last_complete_time,
                 last_complete_total_usdt=last_complete_total,
@@ -290,7 +331,8 @@ class PortfolioService:
                 last_synced_at=now,
                 provider="OKX",
                 data_status="configured",
-                error_message=None
+                error_message=None,
+                source_statuses=source_statuses,
             )
 
             return summary
@@ -314,5 +356,6 @@ class PortfolioService:
                 last_synced_at=None,
                 provider="OKX",
                 data_status="error",
-                error_message="Failed to sync OKX portfolio. Verify the read-only connection and try again."
+                error_message="Failed to sync OKX portfolio. Verify the read-only connection and try again.",
+                source_statuses={"trading": "error", "funding": "error", "earn": "unavailable"},
             )

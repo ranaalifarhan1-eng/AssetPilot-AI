@@ -66,8 +66,9 @@ class RSSNewsProvider(BaseNewsProvider):
 
     async def fetch_latest_news(self, limit: int = 50) -> List[NewsArticle]:
         """Fetch and parse all configured RSS feeds concurrently."""
-        tasks = [self._fetch_feed(feed) for feed in self.feeds]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._default_headers, follow_redirects=True) as client:
+            tasks = [self._fetch_feed(feed, client) for feed in self.feeds]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
         all_articles: List[NewsArticle] = []
         for res in results:
@@ -98,14 +99,16 @@ class RSSNewsProvider(BaseNewsProvider):
             "status": "ready"
         }
 
-    async def _fetch_feed(self, feed: Dict[str, Any]) -> List[NewsArticle]:
+    async def _fetch_feed(self, feed: Dict[str, Any], client: Optional[httpx.AsyncClient] = None) -> List[NewsArticle]:
         """Fetch and parse a single RSS feed."""
         url = feed["url"]
         articles: List[NewsArticle] = []
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, headers=self._default_headers, follow_redirects=True) as client:
-                resp = await client.get(url)
+            owned_client = client is None
+            active_client = client or httpx.AsyncClient(timeout=self.timeout, headers=self._default_headers, follow_redirects=True)
+            try:
+                resp = await active_client.get(url)
                 if resp.status_code != 200:
                     logger.debug(f"RSS feed {feed['name']} returned HTTP {resp.status_code}")
                     return []
@@ -122,6 +125,9 @@ class RSSNewsProvider(BaseNewsProvider):
                     article = self._parse_item(item, feed)
                     if article is not None:
                         articles.append(article)
+            finally:
+                if owned_client:
+                    await active_client.aclose()
 
         except Exception as e:
             logger.debug(f"Error parsing RSS feed '{feed['name']}': {e}")
