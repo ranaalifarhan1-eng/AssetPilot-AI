@@ -21,7 +21,12 @@
 - [ ] Integrated Market Intelligence cards on the dashboard shell.
 
 ## Phase 3: AI Intelligence Engine & Recommendation Framework
-- [ ] Integration with LLM APIs (OpenAI / Anthropic / Gemini).
+- [x] Phase 3A deterministic quantitative and technical intelligence foundation.
+- [x] Phase 3B evidence fusion and optional provider-agnostic AI reasoning foundation.
+- [x] AgentRouter-compatible backend abstraction, disabled until explicitly configured.
+- [x] Provenance, freshness, completeness, structured-output safety, bounded retries, and fingerprint caching.
+- [ ] Evaluate and calibrate reasoning quality against a versioned evidence fixture suite.
+- [ ] Broaden provider integrations only after reliability and safety evaluation.
 - [ ] AI Market Brief generation from aggregated news and quantitative metrics.
 - [ ] Recommendation Engine implementation (ACCUMULATE, HOLD, REDUCE, WATCH).
 - [ ] Explanatory thesis builder with supporting factors and invalidation triggers.

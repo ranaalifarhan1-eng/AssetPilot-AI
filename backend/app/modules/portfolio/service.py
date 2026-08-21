@@ -335,6 +335,24 @@ class PortfolioService:
                 source_statuses=source_statuses,
             )
 
+            # AI evidence consumes this short-lived observation without causing a private resync.
+            await global_cache.set(
+                "portfolio_evidence_snapshot",
+                {
+                    "as_of": now,
+                    "valuation_status": valuation_status,
+                    "assets": {
+                        asset.symbol: {
+                            "balance": asset.total_balance,
+                            "estimated_value_usdt": asset.estimated_value_usdt,
+                            "allocation_pct": asset.allocation_pct,
+                        }
+                        for asset in portfolio_assets
+                    },
+                },
+                ttl=60.0,
+            )
+
             return summary
 
         except Exception as e:

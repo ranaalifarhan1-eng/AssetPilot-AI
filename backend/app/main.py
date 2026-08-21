@@ -12,6 +12,8 @@ from app.api.v1.portfolio import router as portfolio_router, portfolio_service
 from app.api.v1.news import router as news_router
 from app.api.v1.macro import router as macro_router
 from app.api.v1.technical import router as technical_router, technical_service
+from app.api.v1.evidence import router as evidence_router, evidence_service
+from app.api.v1.ai import router as ai_router, ai_service
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -28,6 +30,12 @@ async def lifespan(_: FastAPI):
         portfolio_service.account_client._custom_client = provider_client
         portfolio_service.market_service.crypto_provider._custom_client = provider_client
         technical_service.market_service.crypto_provider._custom_client = provider_client
+        evidence_service.market_service.crypto_provider._custom_client = provider_client
+        evidence_service.technical_service.market_service.crypto_provider._custom_client = provider_client
+        ai_service.evidence_service.market_service.crypto_provider._custom_client = provider_client
+        ai_service.evidence_service.technical_service.market_service.crypto_provider._custom_client = provider_client
+        if hasattr(ai_service.provider, "_custom_client"):
+            ai_service.provider._custom_client = provider_client
         try:
             yield
         finally:
@@ -37,6 +45,12 @@ async def lifespan(_: FastAPI):
             portfolio_service.account_client._custom_client = None
             portfolio_service.market_service.crypto_provider._custom_client = None
             technical_service.market_service.crypto_provider._custom_client = None
+            evidence_service.market_service.crypto_provider._custom_client = None
+            evidence_service.technical_service.market_service.crypto_provider._custom_client = None
+            ai_service.evidence_service.market_service.crypto_provider._custom_client = None
+            ai_service.evidence_service.technical_service.market_service.crypto_provider._custom_client = None
+            if hasattr(ai_service.provider, "_custom_client"):
+                ai_service.provider._custom_client = None
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -64,6 +78,8 @@ app.include_router(portfolio_router, prefix=f"{settings.API_V1_STR}/portfolio", 
 app.include_router(news_router, prefix=f"{settings.API_V1_STR}/news", tags=["News Intelligence"])
 app.include_router(macro_router, prefix=f"{settings.API_V1_STR}/macro", tags=["Macro Intelligence"])
 app.include_router(technical_router, prefix=f"{settings.API_V1_STR}/technical", tags=["Technical Intelligence"])
+app.include_router(evidence_router, prefix=f"{settings.API_V1_STR}/evidence", tags=["Evidence Fusion"])
+app.include_router(ai_router, prefix=f"{settings.API_V1_STR}/ai", tags=["AI Reasoning"])
 
 @app.get("/", tags=["Root"])
 async def root():

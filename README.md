@@ -23,6 +23,8 @@
 
 AssetPilot AI **does not** execute trades automatically or present speculative AI output as guaranteed financial advice. Every recommendation must be accompanied by supporting factors, transparent reasoning, confidence levels, risk metrics, and explicit thesis-invalidation criteria.
 
+Phase 3B now provides a safer research pipeline: `Data → Deterministic Analysis → Evidence Fusion → LLM Reasoning → Human Decision`. Evidence packages are available even when AI is disabled. Optional AgentRouter reasoning is backend-only, explicitly configured, on-demand, schema validated, cached by evidence fingerprint, and never authorized to execute a trade. See [Evidence Fusion](docs/evidence_fusion.md) and [AI Reasoning](docs/ai_reasoning.md).
+
 ---
 
 ## Architecture Overview

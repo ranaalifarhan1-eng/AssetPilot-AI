@@ -152,6 +152,29 @@ export interface TechnicalAnalysisResponse {
   volume: { current: number | null; average_20: number | null; relative_volume: number | null };
 }
 
+export interface EvidencePackage {
+  asset: string; generated_at: string;
+  market: { price: string | null; change_24h_pct: number | null; provider: string; data_status: string; as_of: string | null };
+  technical: { trend: string | null; momentum: string | null; rsi_14: number | null; macd_state: string | null; volatility: string | null; relative_volume: number | null; swing_high: number | null; swing_low: number | null; multi_timeframe_alignment: string | null; data_status: string; as_of: string | null };
+  news: { relevant_story_count: number; positive_count: number; negative_count: number; neutral_count: number; high_impact_count: number; source_status: string; as_of: string | null };
+  macro: { next_high_impact_event: { name: string; scheduled_at: string } | null; days_until_event: number | null; yield_10y: number | null; curve_spread_bps: number | null; source_status: string; as_of: string | null };
+  portfolio: { held: boolean | null; balance: string | null; estimated_value_usdt: string | null; allocation_pct: number | null; portfolio_valuation_status: string; data_status: string; as_of: string | null };
+  freshness: { overall_state: string; stale_components: string[] };
+  evidence_status: string; available_components: string[]; missing_components: string[]; stale_components: string[];
+  evidence_completeness_pct: number; evidence_fingerprint: string;
+}
+
+export interface AIStatusResponse {
+  enabled: boolean; configured: boolean; provider_status: string; ai_provider: string; ai_model: string; last_analysis_generated_at: string | null;
+}
+
+export interface AIAnalysisResponse {
+  asset: string; status: string; provider_status: string; ai_provider: string; ai_model: string;
+  analysis_generated_at: string | null; evidence_fingerprint: string; cached: boolean;
+  reasoning: null | { market_summary: string; bull_case: string[]; bear_case: string[]; key_risks: string[]; portfolio_context: string; important_upcoming_events: string[]; thesis_invalidation_conditions: string[]; evidence_used: { component: string; reference: string }[]; data_limitations: string[] };
+  data_limitations: string[];
+}
+
 export interface AccountSourceBalance {
   source: string;
   balance: string;
@@ -419,6 +442,24 @@ export async function fetchTechnicalAnalysis(symbol: string, timeframe: string =
   if (!res.ok) {
     throw new Error(`Failed to fetch technical analysis for ${symbol}: HTTP ${res.status}`);
   }
+  return res.json();
+}
+
+export async function fetchEvidence(symbol: string): Promise<EvidencePackage> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/evidence/${encodeURIComponent(symbol)}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to fetch evidence for ${symbol}: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAIStatus(): Promise<AIStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/ai/status`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to fetch AI status: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function generateAIAnalysis(symbol: string): Promise<AIAnalysisResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/ai/analyze/${encodeURIComponent(symbol)}`, { method: 'POST', cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to generate AI analysis for ${symbol}: HTTP ${res.status}`);
   return res.json();
 }
 

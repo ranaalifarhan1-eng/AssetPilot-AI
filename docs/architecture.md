@@ -4,6 +4,12 @@
 
 AssetPilot AI is structured as a low-cost, high-efficiency personal market intelligence assistant. It decouples market data collection, quantitative computation, news intelligence, and AI reasoning into distinct processing layers.
 
+The Phase 3B processing boundary is:
+
+`Data → Deterministic Analysis → Evidence Fusion → LLM Reasoning → Human Decision`
+
+Evidence fusion normalizes provenance, freshness, availability, and portfolio context before any optional provider call. The LLM layer is disabled by default, on-demand only, schema validated, and incapable of trade execution. See [Evidence Fusion](evidence_fusion.md) and [AI Reasoning](ai_reasoning.md).
+
 ---
 
 ## Multi-Asset Market Data Architecture (Phase 2A)
