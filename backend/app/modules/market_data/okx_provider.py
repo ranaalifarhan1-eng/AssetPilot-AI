@@ -93,20 +93,37 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
 
     async def get_ticker(self, symbol: str) -> NormalizedTicker:
         symbol_upper = symbol.upper()
-        if symbol_upper not in SUPPORTED_ASSETS_MAP:
-            raise InvalidAssetError(symbol)
+        
+        if symbol_upper in SUPPORTED_ASSETS_MAP:
+            asset_info = SUPPORTED_ASSETS_MAP[symbol_upper]
+            inst_id = asset_info.provider_symbol
+        else:
+            inst_id = f"{symbol_upper}-USDT"
+            asset_info = AssetInfo(
+                internal_id=f"crypto:{symbol_upper.lower()}",
+                symbol=symbol_upper,
+                display_symbol=f"{symbol_upper}/USDT",
+                name=symbol_upper,
+                category=AssetCategory.CRYPTO.value,
+                provider=self.provider_name,
+                provider_symbol=inst_id,
+                quote_currency="USDT",
+                venue="OKX SPOT",
+                market_status="24/7",
+                tradable_on_provider=True
+            )
 
-        asset_info = SUPPORTED_ASSETS_MAP[symbol_upper]
-        inst_id = asset_info.provider_symbol
         url = f"{self.BASE_URL}/ticker?instId={inst_id}"
 
-        data = await self._fetch_okx_json(url)
         try:
+            data = await self._fetch_okx_json(url)
             raw_list = data.get("data", [])
             if not raw_list:
-                raise ProviderUnavailableError(self.provider_name, f"Empty response for ticker {symbol}")
+                raise InvalidAssetError(symbol)
             raw = raw_list[0]
             return self._normalize_ticker(asset_info, raw)
+        except InvalidAssetError:
+            raise
         except (KeyError, IndexError, ValueError) as e:
             logger.error(f"Error parsing OKX ticker response for {symbol}: {e}")
             raise ProviderUnavailableError(self.provider_name, f"Failed to parse ticker data for {symbol}")
@@ -143,87 +160,109 @@ class OKXMarketDataProvider(BaseMarketDataProvider):
         data = await self._fetch_okx_json(url)
         try:
             raw_candles = data.get("data", [])
-            normalized: List[NormalizedCandle] = []
-            for item in raw_candles:
-                ts_ms = int(item[0])
-                ts_dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-                candle = NormalizedCandle(
-                    timestamp=ts_dt,
-                    open=str(item[1]),
-                    high=str(item[2]),
-                    low=str(item[3]),
-                    close=str(item[4]),
-                    volume=str(item[5])
-                )
-                normalized.append(candle)
-            
-            normalized.reverse()
-            return normalized
+            return [self._normalize_candle(item) for item in raw_candles]
         except (KeyError, IndexError, ValueError) as e:
-            logger.error(f"Error parsing OKX candles for {symbol}: {e}")
+            logger.error(f"Error parsing OKX candle response for {symbol}: {e}")
             raise ProviderUnavailableError(self.provider_name, f"Failed to parse candle data for {symbol}")
 
     async def _fetch_okx_json(self, url: str) -> Dict:
+        """Fetch JSON from primary URL with fallback and retries."""
         endpoints = [url]
         if self.BASE_URL in url:
             endpoints.append(url.replace(self.BASE_URL, self.FALLBACK_URL))
 
         last_exception = None
-        for ep_url in endpoints:
+        for endpoint_url in endpoints:
             for attempt in range(1, self._max_retries + 1):
-                client = await self._get_client()
-                should_close = self._custom_client is None
                 try:
-                    response = await client.get(ep_url)
-                    response.raise_for_status()
-                    res_json = response.json()
-                    if res_json.get("code") != "0":
-                        msg = res_json.get("msg", "OKX API error")
-                        raise ProviderUnavailableError(self.provider_name, f"OKX API error code {res_json.get('code')}: {msg}")
-                    return res_json
-                except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
-                    last_exception = e
-                    logger.debug(f"OKX fetch {ep_url} attempt {attempt} failed: {e}")
+                    async with httpx.AsyncClient(timeout=self._timeout, headers=self._default_headers) as client:
+                        resp = await client.get(endpoint_url)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if data.get("code") == "0":
+                                return data
+                            else:
+                                msg = data.get("msg", "Unknown OKX API error")
+                                logger.warning(f"OKX API error: code {data.get('code')} - {msg}")
+                                if data.get("code") in ["51000", "51001"]:
+                                    raise InvalidAssetError(endpoint_url)
+                                raise ProviderUnavailableError(self.provider_name, f"Code {data.get('code')}: {msg}")
+                        elif resp.status_code in [400, 404]:
+                            raise InvalidAssetError(endpoint_url)
+                        else:
+                            raise ProviderUnavailableError(self.provider_name, f"HTTP {resp.status_code}")
+                except (InvalidAssetError, InvalidTimeframeError):
+                    raise
+                except httpx.TimeoutException as e:
+                    last_exception = ProviderTimeoutError(self.provider_name, f"Timeout after {self._timeout}s (attempt {attempt})")
                     if attempt < self._max_retries:
-                        await asyncio.sleep(0.3 * attempt)
-                finally:
-                    if should_close:
-                        await client.aclose()
+                        await asyncio.sleep(0.2 * attempt)
+                except httpx.RequestError as e:
+                    last_exception = ProviderUnavailableError(self.provider_name, f"Network error: {str(e)}")
+                    if attempt < self._max_retries:
+                        await asyncio.sleep(0.2 * attempt)
+                except Exception as e:
+                    last_exception = e
+                    break
 
-        if isinstance(last_exception, httpx.TimeoutException):
-            raise ProviderTimeoutError(self.provider_name)
-        raise ProviderUnavailableError(self.provider_name, f"Network error connecting to OKX: {str(last_exception)}")
+        if isinstance(last_exception, (InvalidAssetError, InvalidTimeframeError, ProviderUnavailableError, ProviderTimeoutError)):
+            raise last_exception
+        raise ProviderUnavailableError(self.provider_name, str(last_exception) if last_exception else "Unknown error")
 
     def _normalize_ticker(self, asset_info: AssetInfo, raw: Dict) -> NormalizedTicker:
-        last_price = raw.get("last", "0")
-        open_24h = raw.get("open24h", "0")
-        high_24h = raw.get("high24h", "0")
-        low_24h = raw.get("low24h", "0")
-        vol_24h = raw.get("vol24h", "0")
-        vol_ccy_24h = raw.get("volCcy24h", "0")
+        price = str(raw.get("last", "0"))
+        open_24h = str(raw.get("open24h", "0"))
+        high_24h = str(raw.get("high24h", "0"))
+        low_24h = str(raw.get("low24h", "0"))
+        vol_24h = str(raw.get("vol24h", "0"))
+        vol_ccy_24h = str(raw.get("volCcy24h", "0"))
 
-        last_flt = float(last_price)
-        open_flt = float(open_24h)
-        
-        change_abs = last_flt - open_flt
-        change_pct = (change_abs / open_flt * 100.0) if open_flt > 0 else 0.0
+        try:
+            last_f = float(price)
+            open_f = float(open_24h)
+            chg_abs_f = last_f - open_f
+            chg_pct_f = ((last_f - open_f) / open_f * 100.0) if open_f != 0 else 0.0
+            chg_abs = f"{chg_abs_f:.4f}"
+            chg_pct = round(chg_pct_f, 2)
+        except (ValueError, ZeroDivisionError):
+            chg_abs = "0.00"
+            chg_pct = 0.0
 
-        ts_ms = int(raw.get("ts", datetime.now(timezone.utc).timestamp() * 1000))
-        ts_dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        ts_raw = raw.get("ts")
+        if ts_raw:
+            try:
+                dt = datetime.fromtimestamp(int(ts_raw) / 1000.0, tz=timezone.utc)
+                iso_ts = dt.isoformat()
+            except Exception:
+                iso_ts = datetime.now(timezone.utc).isoformat()
+        else:
+            iso_ts = datetime.now(timezone.utc).isoformat()
 
         return NormalizedTicker(
             symbol=asset_info.symbol,
             provider_symbol=asset_info.provider_symbol,
             name=asset_info.name,
-            price=str(last_price),
-            open_24h=str(open_24h),
-            high_24h=str(high_24h),
-            low_24h=str(low_24h),
-            volume_24h=str(vol_24h),
-            quote_volume_24h=str(vol_ccy_24h),
-            change_24h_abs=f"{change_abs:+.4f}",
-            change_24h_pct=round(change_pct, 2),
-            timestamp=ts_dt,
+            price=price,
+            open_24h=open_24h,
+            high_24h=high_24h,
+            low_24h=low_24h,
+            volume_24h=vol_24h,
+            quote_volume_24h=vol_ccy_24h,
+            change_24h_abs=chg_abs,
+            change_24h_pct=chg_pct,
+            timestamp=iso_ts,
             provider=self.provider_name,
             data_status="live"
+        )
+
+    def _normalize_candle(self, raw: List) -> NormalizedCandle:
+        ts_ms = int(raw[0])
+        dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        return NormalizedCandle(
+            timestamp=dt.isoformat(),
+            open=str(raw[1]),
+            high=str(raw[2]),
+            low=str(raw[3]),
+            close=str(raw[4]),
+            volume=str(raw[5])
         )

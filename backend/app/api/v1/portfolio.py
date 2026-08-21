@@ -31,12 +31,12 @@ async def get_portfolio_status():
 
 @router.get("/accounts", response_model=AccountSourcesResponse, summary="Get Portfolio Account Sources")
 async def get_account_sources():
-    """Get list of supported OKX account balance areas (Trading vs Funding)."""
+    """Get list of supported OKX account balance areas (Trading, Funding, Earn)."""
     try:
         status_info = portfolio_service.get_status()
         return AccountSourcesResponse(
             provider="OKX",
-            sources=["Trading", "Funding"],
+            sources=["Trading", "Funding", "Earn"],
             configured=status_info.configured
         )
     except Exception as e:

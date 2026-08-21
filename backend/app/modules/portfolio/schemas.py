@@ -10,7 +10,7 @@ class RawAccountBalance(BaseModel):
     source: str
 
 class AccountSourceBalance(BaseModel):
-    source: str = Field(..., description="Account source name, e.g., 'Trading' or 'Funding'")
+    source: str = Field(..., description="Account source name, e.g., 'Trading', 'Funding', 'Earn'")
     balance: str = Field(..., description="Total balance in this account source")
     available: str = Field(..., description="Available balance")
     frozen: str = Field("0", description="Frozen/locked balance")
@@ -28,7 +28,15 @@ class PortfolioAsset(BaseModel):
     allocation_pct: float = Field(0.0, description="Percentage share of total portfolio value")
 
 class PortfolioSummary(BaseModel):
-    total_value_usdt: str = Field("0.00", description="Total portfolio value in USDT")
+    total_value_usdt: str = Field("0.00", description="Total portfolio value in USDT (or last complete value if stale)")
+    known_value_usdt: str = Field("0.00", description="Sum of currently priced assets in USDT")
+    valuation_status: str = Field("unconfigured", description="Status: 'complete', 'partial', 'stale_complete', 'unavailable', 'unconfigured', 'error'")
+    valuation_complete: bool = Field(False, description="Whether all held non-zero assets are priced")
+    valued_asset_count: int = Field(0, description="Number of assets with resolved market prices")
+    unvalued_asset_count: int = Field(0, description="Number of assets lacking market prices")
+    unvalued_assets: List[str] = Field(default_factory=list, description="Symbols of held assets lacking market prices")
+    last_complete_valuation_at: Optional[datetime] = Field(None, description="Timestamp of the last fully complete valuation")
+    last_complete_total_usdt: Optional[str] = Field(None, description="Total value recorded in the last fully complete valuation")
     assets: List[PortfolioAsset] = Field(default_factory=list, description="List of held portfolio assets")
     asset_count: int = Field(0, description="Number of held assets with non-zero balances")
     last_synced_at: Optional[datetime] = Field(None, description="Timestamp of last portfolio sync")
@@ -45,5 +53,5 @@ class PortfolioStatusResponse(BaseModel):
 
 class AccountSourcesResponse(BaseModel):
     provider: str = "OKX"
-    sources: List[str] = ["Trading", "Funding"]
+    sources: List[str] = ["Trading", "Funding", "Earn"]
     configured: bool

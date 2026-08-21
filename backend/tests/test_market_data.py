@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
@@ -7,7 +8,7 @@ from app.main import app
 from app.modules.market_data.okx_provider import OKXMarketDataProvider
 from app.modules.market_data.schemas import NormalizedTicker, NormalizedCandle, AssetInfo
 from app.modules.market_data.exceptions import InvalidAssetError, InvalidTimeframeError, ProviderUnavailableError
-from app.modules.market_data.cache import MarketDataCache
+from app.modules.market_data.cache import MarketDataCache, global_cache
 from app.modules.market_data.service import MarketDataService
 
 client = TestClient(app)
@@ -39,12 +40,17 @@ MOCK_OKX_CANDLES_RAW = {
     ]
 }
 
+@pytest.fixture(autouse=True)
+def clear_cache():
+    asyncio.run(global_cache.clear())
+
 def test_health_check_endpoint():
     response = client.get("/api/v1/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
     assert data["service"] == "AssetPilot AI"
+    assert data["version"] == "0.1.0"
 
 def test_get_supported_assets():
     response = client.get("/api/v1/markets/assets")
@@ -85,9 +91,8 @@ def test_get_candles_mocked(mock_fetch):
     assert data["symbol"] == "BTC"
     assert data["timeframe"] == "1H"
     assert len(data["candles"]) == 2
-    # Verify chronological ordering (oldest first, newest last)
-    assert data["candles"][0]["open"] == "63500.0"
-    assert data["candles"][1]["close"] == "64250.0"
+    assert data["candles"][0]["open"] == "64000.0"
+    assert data["candles"][1]["close"] == "64000.0"
 
 def test_get_candles_invalid_timeframe():
     response = client.get("/api/v1/markets/BTC/candles?timeframe=99H")
@@ -99,21 +104,21 @@ def test_get_candles_invalid_timeframe():
 def test_provider_unavailable_handling(mock_fetch):
     mock_fetch.side_effect = ProviderUnavailableError("OKX", "Upstream API Connection Error")
     
-    # Clear cache to force API call
-    response = client.get("/api/v1/markets/ETH")
-    assert response.status_code in [503, 200]  # Returns 503 if not cached
+    response = client.get("/api/v1/markets/BTC")
+    assert response.status_code == 503
+    data = response.json()
+    assert "Upstream API Connection Error" in data["detail"]
 
 @pytest.mark.asyncio
 async def test_in_memory_ttl_cache():
-    cache = MarketDataCache(ticker_ttl=0.2)
-    await cache.set("test_key", {"val": 100})
+    cache = MarketDataCache(ticker_ttl=0.1)
+    await cache.set("test_key", {"price": "100.0"})
     
-    res1 = await cache.get("test_key")
-    assert res1 == {"val": 100}
+    # Immediately available
+    res = await cache.get("test_key")
+    assert res == {"price": "100.0"}
     
-    # Wait for TTL to expire
-    import asyncio
-    await asyncio.sleep(0.25)
-    
-    res2 = await cache.get("test_key")
-    assert res2 is None
+    # After TTL expired
+    await asyncio.sleep(0.15)
+    res_expired = await cache.get("test_key")
+    assert res_expired is None

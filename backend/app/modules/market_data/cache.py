@@ -29,6 +29,11 @@ class MarketDataCache:
                 "expires_at": expires_at
             }
 
+    async def delete(self, key: str) -> None:
+        async with self._lock:
+            if key in self._store:
+                del self._store[key]
+
     async def clear(self) -> None:
         async with self._lock:
             self._store.clear()

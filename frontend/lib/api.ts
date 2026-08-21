@@ -142,6 +142,14 @@ export interface PortfolioAsset {
 
 export interface PortfolioSummary {
   total_value_usdt: string;
+  known_value_usdt: string;
+  valuation_status: 'complete' | 'partial' | 'stale_complete' | 'unavailable' | 'unconfigured' | 'error';
+  valuation_complete: boolean;
+  valued_asset_count: number;
+  unvalued_asset_count: number;
+  unvalued_assets: string[];
+  last_complete_valuation_at: string | null;
+  last_complete_total_usdt: string | null;
   assets: PortfolioAsset[];
   asset_count: number;
   last_synced_at: string | null;

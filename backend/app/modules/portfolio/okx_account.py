@@ -116,6 +116,34 @@ class OKXAccountClient:
             logger.error(f"Error parsing OKX Funding balance response: {e}")
             raise RuntimeError(f"Failed to parse Funding account response: {str(e)}")
 
+    async def fetch_earn_balances(self) -> List[RawAccountBalance]:
+        """Fetch balances from Simple Earn (Savings) via GET /api/v5/finance/savings/balance."""
+        if not self.is_configured():
+            return []
+
+        request_path = "/api/v5/finance/savings/balance"
+        try:
+            data = await self._authenticated_get(request_path)
+            raw_balances: List[RawAccountBalance] = []
+            earn_data = data.get("data", [])
+            for d in earn_data:
+                ccy = d.get("ccy", "").upper()
+                amt = d.get("amt", "0")
+                if float(amt or 0) > 0:
+                    raw_balances.append(
+                        RawAccountBalance(
+                            ccy=ccy,
+                            total=str(amt),
+                            available=str(amt),
+                            frozen="0",
+                            source="Earn"
+                        )
+                    )
+            return raw_balances
+        except Exception as e:
+            logger.debug(f"OKX Earn balance query skipped or unavailable: {e}")
+            return []
+
     def _generate_signature(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
         """Create HMAC-SHA256 signature for OKX API authentication."""
         message = f"{timestamp}{method.upper()}{request_path}{body}"

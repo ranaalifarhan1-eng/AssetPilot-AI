@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Card } from '../Card';
 import { Badge } from '../Badge';
 import { fetchPortfolioSummary, PortfolioSummary } from '@/lib/api';
-import { PieChart, ArrowUpRight, ShieldCheck, Key, Wallet, ChevronRight } from 'lucide-react';
+import { PieChart, ArrowUpRight, ShieldCheck, Key, Wallet, ChevronRight, AlertTriangle, Clock } from 'lucide-react';
 import Link from 'next/link';
 
 export const PortfolioOverviewCard: React.FC = () => {
@@ -40,11 +40,19 @@ export const PortfolioOverviewCard: React.FC = () => {
 
   return (
     <Card
-      title="Portfolio Overview"
-      subtitle={isConfigured ? 'Live synchronized OKX read-only holdings' : 'OKX Read-Only Portfolio Integration'}
+      title="Tracked Portfolio Value"
+      subtitle={isConfigured ? 'Trading + Funding + Earn read-only balance aggregation' : 'OKX Read-Only Portfolio Integration'}
       badge={
         isConfigured ? (
-          <Badge variant="green" size="sm">LIVE OKX PORTFOLIO</Badge>
+          portfolio?.valuation_status === 'complete' ? (
+            <Badge variant="green" size="sm">LIVE VALUATION</Badge>
+          ) : portfolio?.valuation_status === 'stale_complete' ? (
+            <Badge variant="amber" size="sm">STALE VALUATION</Badge>
+          ) : portfolio?.valuation_status === 'partial' ? (
+            <Badge variant="amber" size="sm">PARTIAL VALUATION</Badge>
+          ) : (
+            <Badge variant="green" size="sm">LIVE OKX PORTFOLIO</Badge>
+          )
         ) : (
           <Badge variant="amber" size="sm">UNCONFIGURED</Badge>
         )
@@ -59,15 +67,44 @@ export const PortfolioOverviewCard: React.FC = () => {
         <div className="p-4 rounded-lg bg-gray-900/40 border border-gray-800/60 animate-pulse h-28"></div>
       ) : isConfigured && portfolio ? (
         <div className="space-y-4">
+          {/* Partial Valuation Alert Banner */}
+          {portfolio.valuation_status === 'partial' && (
+            <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-300 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">Partial Valuation Active: </span>
+                <span>
+                  {portfolio.unvalued_asset_count} asset(s) awaiting price data ({portfolio.unvalued_assets.join(', ')}). 
+                  Known value reflects currently priced holdings only.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Stale Complete Alert Banner */}
+          {portfolio.valuation_status === 'stale_complete' && (
+            <div className="p-2.5 rounded-lg bg-blue-950/30 border border-blue-800/50 text-xs text-blue-300 flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
+              <span>
+                Retaining last complete valuation while awaiting live updates for: {portfolio.unvalued_assets.join(', ')}.
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Total Value Metric */}
             <div className="p-4 rounded-lg bg-gray-900/60 border border-gray-800/80 flex flex-col justify-between">
               <div>
-                <p className="text-xs text-gray-400 font-medium">Total Estimated Portfolio</p>
+                <p className="text-xs text-gray-400 font-medium">
+                  {portfolio.valuation_status === 'partial' ? 'Known Value (Partial)' : 'Connected Account Value'}
+                </p>
                 <div className="mt-1 flex items-baseline gap-2">
                   <span className="text-2xl font-bold text-gray-100 font-mono">
-                    ${parseFloat(portfolio.total_value_usdt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${parseFloat(portfolio.valuation_status === 'partial' ? portfolio.known_value_usdt : portfolio.total_value_usdt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
+                  {portfolio.valuation_status === 'partial' && (
+                    <span className="text-[10px] text-amber-400 font-mono uppercase font-semibold">Partial</span>
+                  )}
                 </div>
               </div>
 

@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { fetchPortfolioSummary, fetchPortfolioStatus, PortfolioSummary, PortfolioStatusResponse } from '@/lib/api';
-import { ShieldCheck, RefreshCw, AlertCircle, Key, Lock, ArrowUpRight, Layers } from 'lucide-react';
+import { ShieldCheck, RefreshCw, AlertCircle, Key, Lock, ArrowUpRight, Layers, AlertTriangle, Clock, Info } from 'lucide-react';
 
 export default function PortfolioPage() {
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
@@ -45,7 +45,7 @@ export default function PortfolioPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-100">Personal Portfolio</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Secure, non-custodial read-only synchronization across OKX Trading & Funding balances.
+            Secure, non-custodial read-only synchronization across OKX Trading, Funding & Earn balances.
           </p>
         </div>
 
@@ -69,6 +69,33 @@ export default function PortfolioPage() {
         <div className="p-4 rounded-xl bg-red-950/30 border border-red-800/40 text-xs text-red-300 flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-red-400" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Partial Valuation Alert Banner */}
+      {isConfigured && portfolio && portfolio.valuation_status === 'partial' && (
+        <div className="p-4 rounded-xl bg-amber-950/30 border border-amber-800/50 text-xs text-amber-300 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-semibold text-amber-200">Partial Valuation Active</div>
+            <p className="text-gray-300 leading-relaxed">
+              Price lookups for <strong>{portfolio.unvalued_asset_count} asset(s)</strong> ({portfolio.unvalued_assets.join(', ')}) are currently unavailable from live market feeds. 
+              The total equity displayed below (<strong>${parseFloat(portfolio.known_value_usdt).toFixed(2)} USDT</strong>) represents known valued assets only and is not a complete valuation.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Stale Complete Valuation Banner */}
+      {isConfigured && portfolio && portfolio.valuation_status === 'stale_complete' && (
+        <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-800/50 text-xs text-blue-300 flex items-start gap-3">
+          <Clock className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold text-blue-200">Stale Complete Valuation Preserved: </span>
+            <span className="text-gray-300">
+              Retaining last complete valuation (${parseFloat(portfolio.total_value_usdt).toFixed(2)} USDT) while awaiting live price updates for: {portfolio.unvalued_assets.join(', ')}.
+            </span>
+          </div>
         </div>
       )}
 
@@ -111,41 +138,59 @@ export default function PortfolioPage() {
         <>
           {/* Top Metrics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card title="Total Estimated Equity">
+            <Card title={portfolio.valuation_status === 'partial' ? "Known Portfolio Equity (Partial)" : "Connected Account Value"}>
               <div className="mt-1">
                 <span className="text-2xl font-bold text-gray-100 font-mono">
-                  ${parseFloat(portfolio.total_value_usdt).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  ${parseFloat(portfolio.valuation_status === 'partial' ? portfolio.known_value_usdt : portfolio.total_value_usdt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                <span className="text-xs text-gray-400 block mt-1">USDT Equivalent</span>
+                <span className="text-xs text-gray-400 block mt-1">
+                  {portfolio.valuation_status === 'partial' ? 'USDT (Partial — Awaiting Unpriced Assets)' : 'USDT Equivalent'}
+                </span>
               </div>
             </Card>
 
-            <Card title="Tracked Assets">
+            <Card title="Tracked Holdings">
               <div className="mt-1">
                 <span className="text-2xl font-bold text-gray-100 font-mono">
                   {portfolio.asset_count}
                 </span>
-                <span className="text-xs text-gray-400 block mt-1">Trading & Funding Balances</span>
+                <span className="text-xs text-gray-400 block mt-1">Trading, Funding & Earn Balances</span>
               </div>
             </Card>
 
-            <Card title="Last Synchronized">
-              <div className="mt-1">
-                <span className="text-base font-bold text-gray-100 font-mono">
-                  {portfolio.last_synced_at ? new Date(portfolio.last_synced_at).toLocaleTimeString() : 'N/A'}
-                </span>
-                <span className="text-xs text-emerald-400 block mt-1 flex items-center gap-1">
-                  <ShieldCheck className="h-3 w-3" /> OKX API Connected
-                </span>
+            <Card title="Valuation Status">
+              <div className="mt-1 flex items-baseline gap-2">
+                {portfolio.valuation_status === 'complete' ? (
+                  <span className="text-base font-bold text-emerald-400 font-mono flex items-center gap-1">
+                    <ShieldCheck className="h-4 w-4" /> 100% Live Valued
+                  </span>
+                ) : portfolio.valuation_status === 'stale_complete' ? (
+                  <span className="text-base font-bold text-amber-400 font-mono flex items-center gap-1">
+                    <Clock className="h-4 w-4" /> Stale Valuation
+                  </span>
+                ) : (
+                  <span className="text-base font-bold text-amber-400 font-mono flex items-center gap-1">
+                    <AlertTriangle className="h-4 w-4" /> Partial ({portfolio.valued_asset_count}/{portfolio.asset_count} Valued)
+                  </span>
+                )}
               </div>
+              <span className="text-xs text-gray-500 block mt-1 font-mono">
+                Last synced: {portfolio.last_synced_at ? new Date(portfolio.last_synced_at).toLocaleTimeString() : 'N/A'}
+              </span>
             </Card>
           </div>
 
           {/* Holdings & Accounts Table */}
           <Card
             title="Portfolio Holdings & Account Breakdown"
-            subtitle="Aggregated across OKX Trading & Funding accounts"
-            badge={<Badge variant="blue" size="sm">LIVE OKX DATA</Badge>}
+            subtitle="Aggregated across OKX Trading, Funding & Earn accounts"
+            badge={
+              portfolio.valuation_status === 'complete' ? (
+                <Badge variant="green" size="sm">LIVE VALUATION</Badge>
+              ) : (
+                <Badge variant="amber" size="sm">{portfolio.valuation_status.toUpperCase()}</Badge>
+              )
+            }
           >
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -179,22 +224,26 @@ export default function PortfolioPage() {
                           ))}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-gray-300">
-                        {asset.price_usdt ? `$${parseFloat(asset.price_usdt).toLocaleString()}` : 'N/A'}
+                      <td className="py-3 px-4">
+                        {asset.price_usdt ? (
+                          <span>${parseFloat(asset.price_usdt) >= 1 ? parseFloat(asset.price_usdt).toFixed(2) : parseFloat(asset.price_usdt).toFixed(4)}</span>
+                        ) : (
+                          <span className="text-gray-500 text-[11px] font-sans">N/A</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-bold text-gray-100">
-                        {asset.estimated_value_usdt ? `$${parseFloat(asset.estimated_value_usdt).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'N/A'}
+                        {asset.valuation_available && asset.estimated_value_usdt ? (
+                          `$${parseFloat(asset.estimated_value_usdt).toFixed(2)}`
+                        ) : (
+                          <span className="text-gray-500 text-[11px] font-sans font-normal">Unpriced</span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 bg-gray-800 rounded-full h-1.5 overflow-hidden">
-                            <div
-                              className="bg-blue-500 h-full rounded-full"
-                              style={{ width: `${Math.min(asset.allocation_pct, 100)}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-gray-300">{asset.allocation_pct}%</span>
-                        </div>
+                        {asset.valuation_available && asset.allocation_pct > 0 ? (
+                          <span className="text-emerald-400 font-semibold">{asset.allocation_pct.toFixed(2)}%</span>
+                        ) : (
+                          <span className="text-gray-500 text-[11px] font-sans">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -204,14 +253,6 @@ export default function PortfolioPage() {
           </Card>
         </>
       )}
-
-      {/* Security Statement Footer */}
-      <div className="p-4 rounded-xl bg-gray-900/40 border border-gray-800/80 flex items-center justify-between text-[11px] text-gray-400 font-mono">
-        <span className="flex items-center gap-1.5">
-          <Lock className="h-3.5 w-3.5 text-emerald-400" /> Strictly Read-Only API Integration
-        </span>
-        <span>No Trading or Withdrawal Permissions</span>
-      </div>
     </div>
   );
 }

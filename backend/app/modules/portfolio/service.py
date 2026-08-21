@@ -17,6 +17,9 @@ from app.modules.market_data.cache import global_cache
 
 logger = logging.getLogger(__name__)
 
+CACHE_KEY_LATEST = "portfolio_summary"
+CACHE_KEY_LAST_COMPLETE = "portfolio_summary_last_complete"
+
 # Map asset names
 ASSET_NAMES: Dict[str, str] = {
     "BTC": "Bitcoin",
@@ -24,6 +27,7 @@ ASSET_NAMES: Dict[str, str] = {
     "SOL": "Solana",
     "USDT": "Tether",
     "USDC": "USD Coin",
+    "USDG": "USD Global",
     "WIF": "dogwifhat",
     "ETHW": "EthereumPoW",
     "OKB": "OKB Token",
@@ -58,6 +62,14 @@ class PortfolioService:
         if not is_config:
             return PortfolioSummary(
                 total_value_usdt="0.00",
+                known_value_usdt="0.00",
+                valuation_status="unconfigured",
+                valuation_complete=False,
+                valued_asset_count=0,
+                unvalued_asset_count=0,
+                unvalued_assets=[],
+                last_complete_valuation_at=None,
+                last_complete_total_usdt=None,
                 assets=[],
                 asset_count=0,
                 last_synced_at=None,
@@ -66,21 +78,23 @@ class PortfolioService:
                 error_message="OKX read-only API credentials not configured in backend environment."
             )
 
-        cache_key = "portfolio_summary"
-        cached = await global_cache.get(cache_key)
+        cached = await global_cache.get(CACHE_KEY_LATEST)
         if cached:
             return cached
 
         try:
-            # Concurrently fetch Trading and Funding balances
-            trading_raw, funding_raw = await asyncio.gather(
+            # Concurrently fetch Trading, Funding, and Earn balances
+            trading_raw, funding_raw, earn_raw = await asyncio.gather(
                 self.account_client.fetch_trading_balances(),
                 self.account_client.fetch_funding_balances(),
+                self.account_client.fetch_earn_balances(),
                 return_exceptions=False
             )
 
+            all_raw = trading_raw + funding_raw + earn_raw
             merged: Dict[str, Dict] = {}
-            for item in trading_raw + funding_raw:
+
+            for item in all_raw:
                 if isinstance(item, RawAccountBalance):
                     sym = item.ccy.upper()
                     bal_val = item.total
@@ -125,6 +139,12 @@ class PortfolioService:
                     )
                 )
 
+            # Filter out zero balance dust
+            non_zero_assets = {
+                sym: data for sym, data in merged.items()
+                if data["total_balance"] > Decimal("0")
+            }
+
             # Concurrently resolve prices for held assets
             async def resolve_price(sym: str) -> tuple[str, Optional[Decimal], bool]:
                 if sym in ["USDT", "USD"]:
@@ -132,11 +152,13 @@ class PortfolioService:
                 try:
                     ticker = await self.market_service.get_ticker(sym)
                     p_dec = parse_decimal(ticker.price, default="0")
-                    return sym, p_dec, True
+                    if p_dec > Decimal("0"):
+                        return sym, p_dec, True
+                    return sym, None, False
                 except Exception:
                     return sym, None, False
 
-            price_tasks = [resolve_price(sym) for sym in merged.keys()]
+            price_tasks = [resolve_price(sym) for sym in non_zero_assets.keys()]
             price_results = await asyncio.gather(*price_tasks, return_exceptions=True)
 
             prices_map: Dict[str, tuple[Optional[Decimal], bool]] = {}
@@ -146,15 +168,20 @@ class PortfolioService:
                     prices_map[sym] = (p_dec, avail)
 
             portfolio_assets: List[PortfolioAsset] = []
-            total_portfolio_usdt = Decimal("0")
+            known_value_dec = Decimal("0")
+            unvalued_symbols: List[str] = []
+            valued_count = 0
 
-            for sym, asset_data in merged.items():
+            for sym, asset_data in non_zero_assets.items():
                 price_usdt_dec, valuation_available = prices_map.get(sym, (None, False))
 
                 est_val_usdt_dec: Optional[Decimal] = None
-                if price_usdt_dec is not None:
+                if valuation_available and price_usdt_dec is not None:
                     est_val_usdt_dec = asset_data["total_balance"] * price_usdt_dec
-                    total_portfolio_usdt += est_val_usdt_dec
+                    known_value_dec += est_val_usdt_dec
+                    valued_count += 1
+                else:
+                    unvalued_symbols.append(sym)
 
                 portfolio_assets.append(
                     PortfolioAsset(
@@ -171,37 +198,86 @@ class PortfolioService:
                     )
                 )
 
-            # Compute allocation percentages
-            if total_portfolio_usdt > 0:
+            # Compute allocation percentages based on known value
+            if known_value_dec > Decimal("0"):
                 for asset in portfolio_assets:
                     if asset.estimated_value_usdt is not None:
                         val_dec = parse_decimal(asset.estimated_value_usdt)
-                        asset.allocation_pct = round(float((val_dec / total_portfolio_usdt) * Decimal("100")), 2)
+                        asset.allocation_pct = round(float((val_dec / known_value_dec) * Decimal("100")), 2)
 
-            # Sort by estimated value descending
+            # Sort by estimated value descending (priced first, then by total balance)
             portfolio_assets.sort(
-                key=lambda a: float(a.estimated_value_usdt or "0"),
+                key=lambda a: (
+                    float(a.estimated_value_usdt or "0"),
+                    float(a.total_balance or "0")
+                ),
                 reverse=True
             )
 
+            now = datetime.now(timezone.utc)
+            last_complete_snapshot: Optional[PortfolioSummary] = await global_cache.get(CACHE_KEY_LAST_COMPLETE)
+
+            # Valuation completeness determination
+            if len(unvalued_symbols) == 0:
+                # Complete Valuation
+                valuation_status = "complete"
+                valuation_complete = True
+                total_value_str = f"{known_value_dec:.2f}"
+                last_complete_time = now
+                last_complete_total = total_value_str
+            else:
+                valuation_complete = False
+                if last_complete_snapshot and last_complete_snapshot.valuation_complete:
+                    # Stale Complete Fallback
+                    valuation_status = "stale_complete"
+                    total_value_str = last_complete_snapshot.total_value_usdt
+                    last_complete_time = last_complete_snapshot.last_synced_at
+                    last_complete_total = last_complete_snapshot.total_value_usdt
+                else:
+                    # Partial Valuation
+                    valuation_status = "partial"
+                    total_value_str = f"{known_value_dec:.2f}"
+                    last_complete_time = None
+                    last_complete_total = None
+
             summary = PortfolioSummary(
-                total_value_usdt=f"{total_portfolio_usdt:.2f}",
+                total_value_usdt=total_value_str,
+                known_value_usdt=f"{known_value_dec:.2f}",
+                valuation_status=valuation_status,
+                valuation_complete=valuation_complete,
+                valued_asset_count=valued_count,
+                unvalued_asset_count=len(unvalued_symbols),
+                unvalued_assets=unvalued_symbols,
+                last_complete_valuation_at=last_complete_time,
+                last_complete_total_usdt=last_complete_total,
                 assets=portfolio_assets,
                 asset_count=len(portfolio_assets),
-                last_synced_at=datetime.now(timezone.utc),
+                last_synced_at=now,
                 provider="OKX",
                 data_status="configured",
                 error_message=None
             )
 
-            # Cache portfolio summary for 30 seconds
-            await global_cache.set(cache_key, summary, ttl=30.0)
+            # Save complete snapshot separately if complete
+            if valuation_complete:
+                await global_cache.set(CACHE_KEY_LAST_COMPLETE, summary, ttl=3600.0)
+
+            # Cache latest portfolio summary for 30 seconds
+            await global_cache.set(CACHE_KEY_LATEST, summary, ttl=30.0)
             return summary
 
         except Exception as e:
             logger.error(f"Error fetching portfolio summary: {e}")
             return PortfolioSummary(
                 total_value_usdt="0.00",
+                known_value_usdt="0.00",
+                valuation_status="error",
+                valuation_complete=False,
+                valued_asset_count=0,
+                unvalued_asset_count=0,
+                unvalued_assets=[],
+                last_complete_valuation_at=None,
+                last_complete_total_usdt=None,
                 assets=[],
                 asset_count=0,
                 last_synced_at=None,
