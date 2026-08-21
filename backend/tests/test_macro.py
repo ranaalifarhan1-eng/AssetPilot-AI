@@ -1,24 +1,26 @@
 import pytest
 import asyncio
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    NY_TZ = ZoneInfo("America/New_York")
+except Exception:
+    NY_TZ = timezone(timedelta(hours=-4))
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.macro.schemas import EconomicEvent, YieldCurveData, MacroStatusResponse
 from app.modules.macro.context_engine import MacroContextEngine
-from app.modules.macro.providers.fed_provider import FederalReserveProvider
+from app.modules.macro.providers.fed_provider import FederalReserveProvider, FOMC_SCHEDULE_2026
 from app.modules.macro.providers.treasury_provider import TreasuryProvider
-from app.modules.macro.providers.official_schedule_provider import OfficialScheduleProvider
+from app.modules.macro.providers.official_schedule_provider import OfficialScheduleProvider, OFFICIAL_CALENDAR_2026
 from app.modules.macro.providers.fred_provider import FREDProvider
 from app.modules.macro.service import MacroService
 from app.modules.market_data.cache import global_cache
 from app.modules.portfolio.schemas import PortfolioSummary, PortfolioAsset
 
 client = TestClient(app)
-
-NY_TZ = ZoneInfo("America/New_York")
 
 @pytest.fixture(autouse=True)
 def clear_cache():
@@ -78,20 +80,27 @@ def test_cpi_interpretation_inline():
     )
     assert "In-Line With Consensus" in direction
 
+def test_cpi_interpretation_without_forecast():
+    # When forecast is None, it should compare against previous
+    direction, impact = MacroContextEngine.derive_interpretation(
+        event_code="CPI_YOY", category="Inflation", actual=2.8, forecast=None, previous=2.9
+    )
+    assert "Decelerating vs Previous Period" in direction
+
 def test_fomc_rate_decision_interpretations():
     # Rate hike: 4.50 -> 4.75 (+25 bps)
-    dir_hike, imp_hike = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.75, 4.75, 4.50)
+    dir_hike, imp_hike = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.75, None, 4.50)
     assert "Interest Rate Hike (+25 bps)" in dir_hike
 
     # Rate cut: 4.50 -> 4.25 (-25 bps)
-    dir_cut, imp_cut = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.25, 4.25, 4.50)
+    dir_cut, imp_cut = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.25, None, 4.50)
     assert "Interest Rate Cut (-25 bps)" in dir_cut
 
     # Rate maintained: 4.50 -> 4.50
-    dir_hold, imp_hold = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.50, 4.50, 4.50)
+    dir_hold, imp_hold = MacroContextEngine.derive_interpretation("FED_RATE", "Monetary Policy", 4.50, None, 4.50)
     assert "Policy Rate Maintained" in dir_hold
 
-def test_nfp_interpretations():
+def test_nfp_interpretations_with_forecast():
     # Beat
     dir_beat, _ = MacroContextEngine.derive_interpretation("NFP", "Labor", 200.0, 160.0, 150.0)
     assert "Stronger Labor Market" in dir_beat
@@ -115,14 +124,99 @@ def test_timezone_dst_conversion_eastern_to_utc():
     assert dt_winter_utc.hour == 13
     assert dt_winter_utc.minute == 30
 
-    # FOMC 14:00 Release
-    fomc_july_ny = datetime(2026, 7, 30, 14, 0, 0, tzinfo=NY_TZ)
+    # FOMC 14:00 Release in EDT (UTC-4 -> 18:00 UTC)
+    fomc_july_ny = datetime(2026, 7, 29, 14, 0, 0, tzinfo=NY_TZ)
     assert fomc_july_ny.astimezone(timezone.utc).hour == 18
 
-    fomc_dec_ny = datetime(2026, 12, 17, 14, 0, 0, tzinfo=NY_TZ)
+    # FOMC 14:00 Release in EST (UTC-5 -> 19:00 UTC)
+    fomc_dec_ny = datetime(2026, 12, 16, 14, 0, 0, tzinfo=NY_TZ)
     assert fomc_dec_ny.astimezone(timezone.utc).hour == 19
 
-# --- 4. Portfolio Exposure Mapping ---
+# --- 4. Official BEA / BLS / Fed Schedule Source Truth & Regression Tests ---
+
+@pytest.mark.asyncio
+async def test_gdp_schedule_aug_26_source_verification():
+    provider = OfficialScheduleProvider()
+    events = await provider.fetch_events()
+
+    # Find GDP Q2 2026 Second Estimate
+    gdp_event = next((e for e in events if e.event_code == "GDP_QOQ" and "Second" in e.indicator_name), None)
+    assert gdp_event is not None
+    # Must be August 26, 2026 (NOT Aug 27!)
+    assert gdp_event.scheduled_at.year == 2026
+    assert gdp_event.scheduled_at.month == 8
+    assert gdp_event.scheduled_at.day == 26
+    assert gdp_event.scheduled_at.hour == 12  # 8:30 AM EDT -> 12:30 UTC
+    assert gdp_event.scheduled_at.minute == 30
+    assert gdp_event.release_name == "Gross Domestic Product"
+    assert gdp_event.schedule_source == "Bureau of Economic Analysis"
+    assert gdp_event.schedule_source_url == "https://www.bea.gov/news/schedule"
+
+@pytest.mark.asyncio
+async def test_pce_schedule_aug_26_source_verification():
+    provider = OfficialScheduleProvider()
+    events = await provider.fetch_events()
+
+    # Find Core PCE for Jul 2026
+    pce_event = next((e for e in events if e.event_code == "PCE_CORE_YOY" and e.period == "Jul 2026"), None)
+    assert pce_event is not None
+    # Must be August 26, 2026 (NOT Aug 28!)
+    assert pce_event.scheduled_at.year == 2026
+    assert pce_event.scheduled_at.month == 8
+    assert pce_event.scheduled_at.day == 26
+    assert pce_event.scheduled_at.hour == 12  # 8:30 AM EDT -> 12:30 UTC
+    assert pce_event.scheduled_at.minute == 30
+    assert pce_event.release_name == "Personal Income and Outlays"
+    assert pce_event.indicator_name == "Core PCE Price Index (YoY)"
+    assert pce_event.schedule_source == "Bureau of Economic Analysis"
+
+@pytest.mark.asyncio
+async def test_forecast_is_null_without_verified_consensus_provider():
+    service = MacroService()
+    events = await service.fetch_and_normalize_all()
+
+    # All government-scheduled upcoming events must have forecast = None
+    upcoming_gov_events = [e for e in events if e.event_status == "upcoming" and e.source in ["Federal Reserve Board", "Bureau of Economic Analysis", "Bureau of Labor Statistics", "Department of Labor"]]
+    assert len(upcoming_gov_events) > 0
+    for e in upcoming_gov_events:
+        assert e.forecast is None, f"Event {e.id} ({e.event_name}) unexpectedly has forecast {e.forecast} without a verified consensus provider"
+        assert e.surprise_absolute is None
+        assert e.surprise_percentage is None
+        assert e.forecast_source is None
+
+@pytest.mark.asyncio
+async def test_previous_is_never_substituted_for_forecast():
+    provider = OfficialScheduleProvider()
+    events = await provider.fetch_events()
+    for e in events:
+        if e.previous is not None and e.event_status == "upcoming":
+            assert e.forecast is None
+            assert e.forecast != e.previous
+
+@pytest.mark.asyncio
+async def test_fomc_september_date_and_null_forecast():
+    provider = FederalReserveProvider()
+    events = await provider.fetch_events()
+    sep_fomc = next((e for e in events if e.event_code == "FED_RATE" and e.period == "Sep 2026"), None)
+    assert sep_fomc is not None
+    assert sep_fomc.scheduled_at.year == 2026
+    assert sep_fomc.scheduled_at.month == 9
+    assert sep_fomc.scheduled_at.day == 16
+    assert sep_fomc.scheduled_at.hour == 18  # 14:00 EDT -> 18:00 UTC
+    assert sep_fomc.forecast is None
+    assert sep_fomc.previous == 4.00
+
+@pytest.mark.asyncio
+async def test_jobless_claims_separate_source_and_null_forecast():
+    provider = OfficialScheduleProvider()
+    events = await provider.fetch_events()
+    claims = next((e for e in events if e.event_code == "CLAIMS" and e.period == "Week ending Aug 22"), None)
+    assert claims is not None
+    assert claims.scheduled_at.day == 27
+    assert claims.schedule_source == "Department of Labor"
+    assert claims.forecast is None
+
+# --- 5. Portfolio Exposure Mapping ---
 
 @pytest.mark.asyncio
 async def test_portfolio_exposure_mapping_with_cached_holdings():
@@ -154,11 +248,10 @@ async def test_portfolio_exposure_mapping_with_cached_holdings():
     assert "BTC" in cpi_event.portfolio_exposure
     assert "ETH" in cpi_event.portfolio_exposure
 
-# --- 5. Provider Isolation & Failure Resilience ---
+# --- 6. Provider Isolation & Failure Resilience ---
 
 @pytest.mark.asyncio
 async def test_provider_failure_isolation():
-    # Mock Fed provider failing, Treasury succeeding
     mock_fed = MagicMock()
     mock_fed.provider_name = "Federal Reserve"
     mock_fed.is_configured.return_value = True
@@ -170,6 +263,7 @@ async def test_provider_failure_isolation():
     mock_treasury.fetch_events = AsyncMock(return_value=[
         EconomicEvent(
             id="test-ust-10y", provider="U.S. Treasury", source="U.S. Department of the Treasury",
+            release_name="Daily Treasury Rates", indicator_name="U.S. 10Y Yield",
             event_name="U.S. 10Y Yield", event_code="UST_10Y", category="Liquidity / Rates",
             scheduled_at=datetime.now(timezone.utc), retrieved_at=datetime.now(timezone.utc),
             actual=4.5, unit="%"
@@ -183,7 +277,7 @@ async def test_provider_failure_isolation():
     assert len(events) == 1
     assert events[0].id == "test-ust-10y"
 
-# --- 6. Yield Curve Parsing ---
+# --- 7. Yield Curve Parsing ---
 
 @pytest.mark.asyncio
 async def test_yield_curve_calculation():
@@ -219,7 +313,7 @@ async def test_yield_curve_calculation():
         assert curve.spread_10y_2y_bps == 23.0
         assert curve.curve_inversion is False
 
-# --- 7. API Endpoints Tests ---
+# --- 8. API Endpoints Tests ---
 
 def test_api_get_macro_status():
     response = client.get("/api/v1/macro/status")
@@ -253,6 +347,8 @@ def test_api_get_upcoming_and_recent():
     assert isinstance(upcoming, list)
     if len(upcoming) > 0:
         assert upcoming[0]["event_status"] == "upcoming"
+        # Must have schedule_source
+        assert upcoming[0]["schedule_source"] is not None
 
     res_rec = client.get("/api/v1/macro/recent?limit=5")
     assert res_rec.status_code == 200

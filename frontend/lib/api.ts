@@ -225,6 +225,8 @@ export interface EconomicEvent {
   provider: string;
   source: string;
   source_url: string | null;
+  release_name: string;
+  indicator_name: string;
   event_name: string;
   event_code: string;
   category: 'Monetary Policy' | 'Inflation' | 'Labor' | 'Growth' | 'Liquidity / Rates' | string;
@@ -242,6 +244,14 @@ export interface EconomicEvent {
   surprise_percentage: number | null;
   interpretation_direction: string | null;
   market_impact_summary: string | null;
+  schedule_source: string | null;
+  schedule_source_url: string | null;
+  forecast_source: string | null;
+  forecast_source_url: string | null;
+  actual_source: string | null;
+  actual_source_url: string | null;
+  previous_source: string | null;
+  previous_source_url: string | null;
   related_assets: string[];
   portfolio_exposure: string[];
   retrieved_at: string;

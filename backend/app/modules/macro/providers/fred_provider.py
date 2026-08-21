@@ -33,7 +33,6 @@ class FREDProvider(BaseMacroProvider):
             logger.debug("FRED API key not configured; skipping FRED provider.")
             return []
 
-        # If configured, fetch series releases
         events: List[EconomicEvent] = []
         now_utc = datetime.now(timezone.utc)
         try:
@@ -54,6 +53,8 @@ class FREDProvider(BaseMacroProvider):
                                     provider=self.provider_name,
                                     source="Federal Reserve Bank of St. Louis",
                                     source_url=f"https://fred.stlouisfed.org/release?rid={rel_id}",
+                                    release_name="FRED Data Release",
+                                    indicator_name=rel_name,
                                     event_name=rel_name,
                                     event_code="FRED_SERIES",
                                     category="Growth",
@@ -71,6 +72,14 @@ class FREDProvider(BaseMacroProvider):
                                     surprise_percentage=None,
                                     interpretation_direction="FRED Economic Release",
                                     market_impact_summary="Macroeconomic time series published by St. Louis Fed.",
+                                    schedule_source="Federal Reserve Bank of St. Louis",
+                                    schedule_source_url=f"https://fred.stlouisfed.org/release?rid={rel_id}",
+                                    forecast_source=None,
+                                    forecast_source_url=None,
+                                    actual_source=None,
+                                    actual_source_url=None,
+                                    previous_source=None,
+                                    previous_source_url=None,
                                     related_assets=["US Equities", "Fixed Income"],
                                     portfolio_exposure=[],
                                     retrieved_at=now_utc,

@@ -2,7 +2,7 @@ import logging
 import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import httpx
 
 try:
@@ -18,24 +18,27 @@ from app.modules.macro.context_engine import MacroContextEngine
 logger = logging.getLogger(__name__)
 
 FED_MONETARY_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
+FOMC_SCHEDULE_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
-# Published 2026 FOMC Meetings Calendar (Decision Release: 14:00 Eastern Time)
-FOMC_SCHEDULE_2026 = [
-    (2026, 1, 29, "Jan 2026", 4.50, 4.50, 4.50, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 3, 19, "Mar 2026", 4.50, 4.25, 4.25, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 4, 30, "Apr 2026", 4.25, 4.25, 4.25, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 6, 18, "Jun 2026", 4.25, 4.00, 4.00, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 7, 30, "Jul 2026", 4.00, 4.00, 4.00, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 9, 17, "Sep 2026", 4.00, 3.75, None, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 11, 5, "Nov 2026", 3.75, 3.75, None, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
-    (2026, 12, 17, "Dec 2026", 3.75, 3.50, None, "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
+# Official 2026 FOMC Meeting Calendar from Federal Reserve Board
+# Source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+FOMC_SCHEDULE_2026: List[Dict[str, Any]] = [
+    {"year": 2026, "month": 1, "day": 29, "period": "Jan 2026", "previous": 4.50, "actual": 4.50},
+    {"year": 2026, "month": 3, "day": 18, "period": "Mar 2026", "previous": 4.50, "actual": 4.25},
+    {"year": 2026, "month": 4, "day": 29, "period": "Apr 2026", "previous": 4.25, "actual": 4.25},
+    {"year": 2026, "month": 6, "day": 17, "period": "Jun 2026", "previous": 4.25, "actual": 4.00},
+    {"year": 2026, "month": 7, "day": 29, "period": "Jul 2026", "previous": 4.00, "actual": 4.00},
+    {"year": 2026, "month": 9, "day": 16, "period": "Sep 2026", "previous": 4.00, "actual": None},
+    {"year": 2026, "month": 11, "day": 5, "period": "Nov 2026", "previous": 4.00, "actual": None},
+    {"year": 2026, "month": 12, "day": 16, "period": "Dec 2026", "previous": 4.00, "actual": None},
 ]
 
 class FederalReserveProvider(BaseMacroProvider):
     """
     Authoritative provider for U.S. Federal Reserve Monetary Policy:
-    - Official FOMC Interest Rate Decisions & Calendar
-    - FOMC Press Statements & Minutes via Official RSS Feed
+    - Official FOMC Meeting Calendar & Interest Rate Decisions
+    - Live Statements & Minutes via Official RSS Feed
+    - Zero fabrication: No synthetic forecasts on Federal Reserve decisions
     """
 
     def __init__(self, timeout: float = 10.0):
@@ -52,29 +55,30 @@ class FederalReserveProvider(BaseMacroProvider):
         events: List[EconomicEvent] = []
         now_utc = datetime.now(timezone.utc)
 
-        # 1. Process Official 2026 FOMC Interest Rate Schedule
-        for year, month, day, period_label, prev_rate, fcast_rate, act_rate, url in FOMC_SCHEDULE_2026:
-            # Construct 14:00 NY time with full DST awareness
-            ny_dt = datetime(year, month, day, 14, 0, 0, tzinfo=NY_TZ)
+        # 1. Official FOMC Meeting Schedule
+        for item in FOMC_SCHEDULE_2026:
+            ny_dt = datetime(item["year"], item["month"], item["day"], 14, 0, 0, tzinfo=NY_TZ)
             utc_dt = ny_dt.astimezone(timezone.utc)
 
-            event_id = f"us-fomc-rate-{year}-{month:02d}-{day:02d}"
+            event_id = f"us-fomc-rate-{item['year']}-{item['month']:02d}-{item['day']:02d}"
             is_past = utc_dt < now_utc
 
-            if is_past:
+            if is_past and item["actual"] is not None:
                 event_status = "released"
-                actual_val = act_rate if act_rate is not None else prev_rate
+                actual_val = item["actual"]
             else:
                 event_status = "upcoming"
                 actual_val = None
 
-            surprise_abs, surprise_pct = MacroContextEngine.calculate_surprises(actual_val, fcast_rate)
+            # Forecast: None because the Federal Reserve does NOT publish consensus forecasts on its own decisions
+            forecast_val = None
+            surprise_abs, surprise_pct = MacroContextEngine.calculate_surprises(actual_val, forecast_val)
             interp_dir, impact_summary = MacroContextEngine.derive_interpretation(
                 event_code="FED_RATE",
                 category="Monetary Policy",
                 actual=actual_val,
-                forecast=fcast_rate,
-                previous=prev_rate
+                forecast=forecast_val,
+                previous=item["previous"]
             )
 
             related_assets = MacroContextEngine.get_related_assets("FED_RATE", "Monetary Policy")
@@ -84,17 +88,19 @@ class FederalReserveProvider(BaseMacroProvider):
                     id=event_id,
                     provider=self.provider_name,
                     source="Federal Reserve Board",
-                    source_url=url,
+                    source_url=FOMC_SCHEDULE_URL,
+                    release_name="FOMC Statement & Policy Decision",
+                    indicator_name="FOMC Interest Rate Decision",
                     event_name="FOMC Interest Rate Decision",
                     event_code="FED_RATE",
                     category="Monetary Policy",
                     country="US",
                     currency="USD",
                     scheduled_at=utc_dt,
-                    period=period_label,
+                    period=item["period"],
                     actual=actual_val,
-                    forecast=fcast_rate,
-                    previous=prev_rate,
+                    forecast=forecast_val,
+                    previous=item["previous"],
                     unit="%",
                     importance="high",
                     event_status=event_status,
@@ -102,6 +108,14 @@ class FederalReserveProvider(BaseMacroProvider):
                     surprise_percentage=surprise_pct,
                     interpretation_direction=interp_dir,
                     market_impact_summary=impact_summary,
+                    schedule_source="Federal Reserve Board",
+                    schedule_source_url=FOMC_SCHEDULE_URL,
+                    forecast_source=None,
+                    forecast_source_url=None,
+                    actual_source="Federal Reserve Board" if actual_val is not None else None,
+                    actual_source_url=FOMC_SCHEDULE_URL if actual_val is not None else None,
+                    previous_source="Federal Reserve Board",
+                    previous_source_url=FOMC_SCHEDULE_URL,
                     related_assets=related_assets,
                     portfolio_exposure=[],
                     retrieved_at=now_utc,
@@ -109,7 +123,7 @@ class FederalReserveProvider(BaseMacroProvider):
                 )
             )
 
-        # 2. Ingest Live Federal Reserve Monetary Press Releases via Official RSS
+        # 2. Live Federal Reserve Monetary Press Releases via Official RSS
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 headers = {"User-Agent": "AssetPilot-AI/0.1 (Macro-Intelligence)"}
@@ -145,7 +159,9 @@ class FederalReserveProvider(BaseMacroProvider):
                                 id=event_id,
                                 provider=self.provider_name,
                                 source="Federal Reserve Board",
-                                source_url=link or "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+                                source_url=link or FOMC_SCHEDULE_URL,
+                                release_name="Federal Reserve Press Release",
+                                indicator_name=title,
                                 event_name=title,
                                 event_code=event_code,
                                 category="Monetary Policy",
@@ -163,6 +179,14 @@ class FederalReserveProvider(BaseMacroProvider):
                                 surprise_percentage=None,
                                 interpretation_direction=interp_dir,
                                 market_impact_summary=impact_summary,
+                                schedule_source="Federal Reserve Board",
+                                schedule_source_url=FED_MONETARY_RSS,
+                                forecast_source=None,
+                                forecast_source_url=None,
+                                actual_source="Federal Reserve Board",
+                                actual_source_url=link or FOMC_SCHEDULE_URL,
+                                previous_source=None,
+                                previous_source_url=None,
                                 related_assets=related_assets,
                                 portfolio_exposure=[],
                                 retrieved_at=now_utc,

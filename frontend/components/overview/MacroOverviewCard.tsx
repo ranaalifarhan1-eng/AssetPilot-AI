@@ -97,7 +97,7 @@ export const MacroOverviewCard: React.FC = () => {
                 </div>
 
                 <div className="font-bold text-gray-100 truncate flex items-center gap-1.5">
-                  <span className="truncate">{event.event_name}</span>
+                  <span className="truncate">{event.indicator_name || event.event_name}</span>
                   {event.period && (
                     <span className="text-[10px] text-gray-400 font-mono font-normal flex-shrink-0">
                       ({event.period})
@@ -116,9 +116,13 @@ export const MacroOverviewCard: React.FC = () => {
                 <div className="text-[11px] font-bold text-emerald-400">
                   {formatRelativeTime(event.scheduled_at)}
                 </div>
-                {event.forecast !== null && (
+                {event.forecast !== null ? (
                   <div className="text-[10px] text-gray-400">
                     Est: {event.forecast}{event.unit}
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-gray-500">
+                    Consensus: —
                   </div>
                 )}
               </div>

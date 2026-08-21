@@ -39,7 +39,7 @@ export default function MacroPage() {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Active View: 'upcoming' | 'recent' | 'yield-curve'
+  // Active Tab: 'upcoming' | 'recent' | 'yield-curve'
   const [activeTab, setActiveTab] = useState<'upcoming' | 'recent' | 'yield-curve'>('upcoming');
 
   // Filters
@@ -71,7 +71,7 @@ export default function MacroPage() {
 
   useEffect(() => {
     loadMacroData();
-    const interval = setInterval(loadMacroData, 60000); // 60s auto refresh
+    const interval = setInterval(loadMacroData, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -80,7 +80,6 @@ export default function MacroPage() {
     loadMacroData();
   };
 
-  // Helper formatting functions
   const formatTime = (utcStr: string) => {
     try {
       const d = new Date(utcStr);
@@ -118,7 +117,6 @@ export default function MacroPage() {
     }
   };
 
-  // Filtered lists
   const filterList = (events: EconomicEvent[]) => {
     return events.filter((e) => {
       if (selectedCategory !== 'All' && e.category.toLowerCase() !== selectedCategory.toLowerCase()) {
@@ -137,7 +135,6 @@ export default function MacroPage() {
   const filteredUpcoming = useMemo(() => filterList(upcoming), [upcoming, selectedCategory, highImpactOnly, portfolioOnly]);
   const filteredRecent = useMemo(() => filterList(recent), [recent, selectedCategory, highImpactOnly, portfolioOnly]);
 
-  // Derived KPI metrics
   const nextHighImpact = upcoming.find((e) => e.importance === 'high');
   const highImpactThisWeek = upcoming.filter((e) => {
     if (e.importance !== 'high') return false;
@@ -194,7 +191,7 @@ export default function MacroPage() {
         <Card title="Next High-Impact Event">
           <div className="mt-1 space-y-1">
             <div className="text-sm font-bold text-gray-100 line-clamp-1">
-              {nextHighImpact ? nextHighImpact.event_name : 'No scheduled events'}
+              {nextHighImpact ? nextHighImpact.indicator_name || nextHighImpact.event_name : 'No scheduled events'}
             </div>
             <div className="text-xs text-blue-400 font-mono font-medium flex items-center gap-1">
               <Clock className="h-3 w-3" />
@@ -202,7 +199,7 @@ export default function MacroPage() {
             </div>
             {nextHighImpact && (
               <div className="text-[10px] text-gray-400 font-mono">
-                {nextHighImpact.category} {nextHighImpact.forecast !== null ? `| Est: ${nextHighImpact.forecast}${nextHighImpact.unit}` : ''}
+                {nextHighImpact.category} {nextHighImpact.previous !== null ? `| Prior: ${nextHighImpact.previous}${nextHighImpact.unit}` : ''}
               </div>
             )}
           </div>
@@ -214,20 +211,22 @@ export default function MacroPage() {
             <span className="text-2xl font-bold text-gray-100 font-mono">{highImpactThisWeek}</span>
             <span className="text-xs text-gray-400">Events Scheduled</span>
           </div>
-          <p className="text-[11px] text-emerald-400 mt-1">FOMC, CPI, NFP & Key Releases</p>
+          <p className="text-[11px] text-emerald-400 mt-1">BEA, BLS, FOMC & Key Releases</p>
         </Card>
 
         {/* Latest Macro Release */}
         <Card title="Latest Macro Release">
           <div className="mt-1 space-y-1">
             <div className="text-sm font-bold text-gray-100 line-clamp-1">
-              {latestRelease ? latestRelease.event_name : 'N/A'}
+              {latestRelease ? latestRelease.indicator_name || latestRelease.event_name : 'N/A'}
             </div>
             {latestRelease && latestRelease.actual !== null ? (
               <div className="flex items-center gap-2 text-xs font-mono">
                 <span className="text-gray-200 font-bold">Act: {latestRelease.actual}{latestRelease.unit}</span>
-                {latestRelease.forecast !== null && (
+                {latestRelease.forecast !== null ? (
                   <span className="text-gray-400">Est: {latestRelease.forecast}{latestRelease.unit}</span>
+                ) : (
+                  <span className="text-gray-500 text-[10px]">Est: —</span>
                 )}
                 {latestRelease.surprise_absolute !== null && (
                   <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${latestRelease.surprise_absolute > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
@@ -300,7 +299,7 @@ export default function MacroPage() {
           </button>
         </div>
 
-        {/* Category & Filters Bar (for Upcoming and Recent tabs) */}
+        {/* Category & Filters Bar */}
         {activeTab !== 'yield-curve' && (
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 bg-gray-900/80 p-1 rounded-lg border border-gray-800 text-[11px]">
@@ -348,8 +347,8 @@ export default function MacroPage() {
       {activeTab === 'upcoming' && (
         <Card
           title="Scheduled Macroeconomic Events"
-          subtitle="Timezone-aware release dates and consensus expectations"
-          badge={<Badge variant="blue" size="sm">SCHEDULED</Badge>}
+          subtitle="Timezone-aware release dates directly from official agency calendars"
+          badge={<Badge variant="blue" size="sm">OFFICIAL SCHEDULE</Badge>}
         >
           {loading ? (
             <div className="p-8 text-center text-xs text-gray-400 animate-pulse">Loading upcoming calendar...</div>
@@ -384,12 +383,19 @@ export default function MacroPage() {
                       </span>
                     </div>
 
-                    <h4 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                      <span>{event.event_name}</span>
-                      {event.period && (
-                        <span className="text-xs text-gray-400 font-normal font-mono">({event.period})</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                        <span>{event.indicator_name || event.event_name}</span>
+                        {event.period && (
+                          <span className="text-xs text-gray-400 font-normal font-mono">({event.period})</span>
+                        )}
+                      </h4>
+                      {event.release_name && event.release_name !== (event.indicator_name || event.event_name) && (
+                        <div className="text-[11px] text-gray-500 font-mono">
+                          Publication: {event.release_name}
+                        </div>
                       )}
-                    </h4>
+                    </div>
 
                     {event.market_impact_summary && (
                       <p className="text-xs text-gray-400 max-w-3xl leading-relaxed">
@@ -412,19 +418,22 @@ export default function MacroPage() {
                     </div>
                   </div>
 
-                  {/* Right: Forecast vs Previous Figures */}
+                  {/* Right: Forecast vs Previous Figures & Provenance */}
                   <div className="flex items-center gap-6 text-right font-mono flex-shrink-0">
                     <div className="space-y-0.5">
                       <div className="text-[10px] text-gray-500 uppercase">Consensus Est.</div>
                       <div className="text-sm font-bold text-gray-200">
-                        {event.forecast !== null ? `${event.forecast}${event.unit}` : 'N/A'}
+                        {event.forecast !== null ? `${event.forecast}${event.unit}` : '—'}
                       </div>
+                      {event.forecast === null && (
+                        <div className="text-[9px] text-gray-500">Not available</div>
+                      )}
                     </div>
 
                     <div className="space-y-0.5">
                       <div className="text-[10px] text-gray-500 uppercase">Previous</div>
                       <div className="text-sm font-bold text-gray-400">
-                        {event.previous !== null ? `${event.previous}${event.unit}` : 'N/A'}
+                        {event.previous !== null ? `${event.previous}${event.unit}` : '—'}
                       </div>
                     </div>
 
@@ -451,7 +460,7 @@ export default function MacroPage() {
       {activeTab === 'recent' && (
         <Card
           title="Recent Macroeconomic Releases"
-          subtitle="Actual vs Forecast vs Previous results with surprise calculation and economic context"
+          subtitle="Official published results with economic context and source provenance"
           badge={<Badge variant="green" size="sm">PUBLISHED DATA</Badge>}
         >
           {loading ? (
@@ -478,12 +487,19 @@ export default function MacroPage() {
                       </span>
                     </div>
 
-                    <h4 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                      <span>{event.event_name}</span>
-                      {event.period && (
-                        <span className="text-xs text-gray-400 font-normal font-mono">({event.period})</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                        <span>{event.indicator_name || event.event_name}</span>
+                        {event.period && (
+                          <span className="text-xs text-gray-400 font-normal font-mono">({event.period})</span>
+                        )}
+                      </h4>
+                      {event.release_name && event.release_name !== (event.indicator_name || event.event_name) && (
+                        <div className="text-[11px] text-gray-500 font-mono">
+                          Publication: {event.release_name}
+                        </div>
                       )}
-                    </h4>
+                    </div>
 
                     {/* Context & Interpretation */}
                     {event.interpretation_direction && (
@@ -508,7 +524,7 @@ export default function MacroPage() {
                     <div className="space-y-0.5">
                       <div className="text-[10px] text-gray-500 uppercase">Actual</div>
                       <div className="text-base font-bold text-gray-100">
-                        {event.actual !== null ? `${event.actual}${event.unit}` : 'N/A'}
+                        {event.actual !== null ? `${event.actual}${event.unit}` : '—'}
                       </div>
                     </div>
 
@@ -526,7 +542,7 @@ export default function MacroPage() {
                       </div>
                     </div>
 
-                    {event.surprise_absolute !== null && (
+                    {event.surprise_absolute !== null ? (
                       <div className="space-y-0.5 min-w-[70px]">
                         <div className="text-[10px] text-gray-500 uppercase">Surprise</div>
                         <div className={`text-xs font-bold ${
@@ -539,6 +555,11 @@ export default function MacroPage() {
                           {event.surprise_absolute > 0 ? `+${event.surprise_absolute}` : event.surprise_absolute}
                           {event.surprise_percentage !== null ? ` (${event.surprise_percentage > 0 ? '+' : ''}${event.surprise_percentage}%)` : ''}
                         </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-0.5 min-w-[70px]">
+                        <div className="text-[10px] text-gray-500 uppercase">Surprise</div>
+                        <div className="text-xs text-gray-500">—</div>
                       </div>
                     )}
                   </div>

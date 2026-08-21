@@ -33,7 +33,7 @@ CATEGORY_DEFAULT_EXPOSURES: Dict[str, List[str]] = {
 class MacroContextEngine:
     """
     Deterministic calculation engine for:
-    - Surprise magnitude (absolute & percentage)
+    - Surprise magnitude (absolute & percentage) strictly when genuine forecast exists
     - Contextual economic interpretation
     - Market asset exposure mapping
     """
@@ -45,7 +45,7 @@ class MacroContextEngine:
     ) -> Tuple[Optional[float], Optional[float]]:
         """
         Calculates absolute and percentage surprises safely.
-        Returns (surprise_absolute, surprise_percentage).
+        Strictly returns (None, None) if forecast or actual is None.
         """
         if actual is None or forecast is None:
             return None, None
@@ -77,7 +77,10 @@ class MacroContextEngine:
                     "Awaiting Release (Consensus Established)",
                     f"Consensus forecast is {forecast}. Market participants are positioned around this expectation."
                 )
-            return ("Scheduled Event", "Official release date scheduled.")
+            return (
+                "Scheduled Official Release",
+                "Official publication scheduled on agency calendar. Consensus forecast not supplied."
+            )
 
         code = event_code.upper()
 
@@ -106,6 +109,7 @@ class MacroContextEngine:
                     return ("Decelerating vs Previous Period", f"Inflation slowed to {actual}% from previous {previous}%.")
                 else:
                     return ("Unchanged vs Previous Period", f"Inflation remained steady at {actual}%.")
+            return ("Inflation Release Published", f"Published inflation figure is {actual}%.")
 
         # 2. Monetary Policy & Interest Rate Decisions
         if category == "Monetary Policy" or "FED_RATE" in code or "FOMC" in code:
@@ -127,9 +131,10 @@ class MacroContextEngine:
                         f"Policy Rate Maintained ({actual}%)",
                         f"Federal Reserve maintained the target benchmark rate at {actual}%, keeping monetary stance unchanged."
                     )
+            return (f"Policy Benchmark at {actual}%", f"Current Federal Reserve benchmark rate is {actual}%.")
 
         # 3. Labor Market (NFP, Unemployment Rate, Jobless Claims)
-        if category == "Labor" or "NFP" in code or "UNEMP" in code or "PAYROLL" in code:
+        if category == "Labor" or "NFP" in code or "UNEMP" in code or "PAYROLL" in code or "CLAIMS" in code:
             if "UNEMP" in code:
                 if forecast is not None:
                     if actual > forecast:
@@ -144,6 +149,28 @@ class MacroContextEngine:
                         )
                     else:
                         return ("In-Line With Consensus", "Unemployment rate matched consensus expectations.")
+                elif previous is not None:
+                    if actual > previous:
+                        return ("Unemployment Increased vs Previous", f"Unemployment rose to {actual}% from {previous}%.")
+                    elif actual < previous:
+                        return ("Unemployment Decreased vs Previous", f"Unemployment fell to {actual}% from {previous}%.")
+                    else:
+                        return ("Unemployment Unchanged vs Previous", f"Unemployment steady at {actual}%.")
+            elif "CLAIMS" in code:
+                if forecast is not None:
+                    if actual > forecast:
+                        return ("Higher Jobless Claims (Labor Softening)", f"Jobless claims at {actual}k exceeded forecast of {forecast}k.")
+                    elif actual < forecast:
+                        return ("Lower Jobless Claims (Labor Resilience)", f"Jobless claims at {actual}k came below forecast of {forecast}k.")
+                    else:
+                        return ("Jobless Claims In-Line With Consensus", f"Jobless claims matched forecast at {actual}k.")
+                elif previous is not None:
+                    if actual > previous:
+                        return ("Claims Rose vs Previous Week", f"Initial claims rose to {actual}k from {previous}k.")
+                    elif actual < previous:
+                        return ("Claims Fell vs Previous Week", f"Initial claims fell to {actual}k from {previous}k.")
+                    else:
+                        return ("Claims Steady vs Previous Week", f"Initial claims unchanged at {actual}k.")
             else:
                 # NFP / Payrolls
                 if forecast is not None:
@@ -159,6 +186,8 @@ class MacroContextEngine:
                         )
                     else:
                         return ("In-Line With Consensus", "Job additions matched consensus forecasts.")
+                elif previous is not None:
+                    return ("Employment Data Published", f"Net payroll change was {actual}k compared to {previous}k in previous period.")
 
         # 4. Growth Indicators (GDP, Retail Sales)
         if category == "Growth" or "GDP" in code or "RETAIL" in code:
@@ -175,6 +204,8 @@ class MacroContextEngine:
                     )
                 else:
                     return ("In-Line With Consensus", "Growth figures aligned with consensus expectations.")
+            elif previous is not None:
+                return ("Economic Growth Report", f"Growth recorded at {actual}% (prior period: {previous}%).")
 
         # 5. Liquidity & Rates (Treasury Yields)
         if category == "Liquidity / Rates" or "UST" in code or "YIELD" in code:
@@ -183,15 +214,9 @@ class MacroContextEngine:
                 "Official U.S. Treasury benchmark yield reflects current sovereign debt discount rates."
             )
 
-        # Fallback general direction
-        if forecast is not None:
-            if actual > forecast:
-                return ("Above Consensus Estimate", f"Released value ({actual}) exceeded forecast ({forecast}).")
-            elif actual < forecast:
-                return ("Below Consensus Estimate", f"Released value ({actual}) was below forecast ({forecast}).")
-            else:
-                return ("In-Line With Consensus", f"Released value matched forecast ({actual}).")
-
+        # Fallback
+        if previous is not None:
+            return ("Official Release Published", f"Actual value recorded at {actual} (previous: {previous}).")
         return ("Official Release Published", f"Actual value recorded at {actual}.")
 
     @staticmethod
