@@ -6,9 +6,9 @@
 - Tokenized stock exposure
 - Portfolio tracking
 - Financial news intelligence
+- Macro & economic events intelligence
 - Market sentiment
 - Technical analysis
-- Macro-market events
 - AI-assisted investment research
 - Watchlists
 - Opportunity & risk detection
@@ -34,14 +34,52 @@ AssetPilot AI/
 ├── docs/                # Architecture, roadmap, security, & engine specifications
 ├── frontend/            # Next.js, TypeScript, Tailwind CSS fintech UI dashboard shell
 ├── backend/             # Python & FastAPI modular REST API service
+│   ├── app/api/v1/macro.py    # Macro & Economic Events Intelligence API Router
+│   ├── app/api/v1/news.py     # News Intelligence API Router
 │   ├── app/api/v1/markets.py  # Multi-Asset Market Data API Router
 │   ├── app/api/v1/portfolio.py# Read-Only Portfolio API Router
+│   ├── app/modules/macro/     # Federal Reserve, Treasury, BLS/BEA Providers & Context Engine
+│   ├── app/modules/news/      # News Ingestion, Deduplication, & Entity Mapping
 │   ├── app/modules/market_data/# OKX, Finnhub, & Tokenized Stocks Providers, Cache, & Schemas
 │   ├── app/modules/portfolio/ # OKX Account Client & Portfolio Aggregator
 ├── scripts/             # Local development & utility scripts
 ├── .env.example         # Template for environment variables (NEVER COMMIT .env)
 └── .gitignore           # Git ignore rules for node_modules, .venv, .env, etc.
 ```
+
+---
+
+## Phase 2C — Macro & Economic Events Intelligence
+
+- **Authoritative Macroeconomic Pipeline**:
+  - `Authoritative Sources → Multi-Provider Ingestion → Deduplication → Deterministic Surprise Math → Contextual Interpretation → Portfolio Intersection → UI & API`
+- **Data Providers**:
+  - `FederalReserveProvider`: Published 2026 FOMC Meeting Calendar, official benchmark interest rate decisions, and live press releases / minutes via official Fed RSS.
+  - `TreasuryProvider`: U.S. Department of the Treasury Daily Yield Curve XML feed parsing 1M, 2M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y yields and computing 10Y-2Y curve spread & inversion flags.
+  - `OfficialScheduleProvider`: Deterministic, published economic calendar for BLS CPI / Core CPI, BLS Nonfarm Payrolls & Unemployment Rate, BEA Core PCE, BEA GDP, and weekly Initial Jobless Claims.
+  - `FREDProvider`: Extensible St. Louis Fed API provider for time-series releases (when `FRED_API_KEY` is configured).
+- **Surprise Math & Economic Context Engine**:
+  - Strict separation of `actual`, `forecast`, and `previous` fields (never substitutes previous as forecast).
+  - Calculates `surprise_absolute` and safe `surprise_percentage` (protected against zero-forecast division).
+  - Deterministic contextual economic interpretations (e.g. Higher than Forecast / Inflationary vs. Disinflationary) strictly as market context, never buy/sell signals.
+- **Timezone Correctness**:
+  - All timestamps stored in UTC (`timezone.utc`).
+  - Converts published Eastern Time release hours (`08:30 ET`, `14:00 ET`) using `zoneinfo` with automatic Daylight Saving Time awareness (EDT vs EST).
+- **Portfolio Exposure Intersection**:
+  - Intersects macroeconomic indicators with active user holdings in the read-only portfolio cache (e.g. `['BTC', 'ETH']`) without making extra requests to OKX.
+- **API Endpoints (`/api/v1/macro`)**:
+  - `GET /api/v1/macro/status`: Service status and provider configuration.
+  - `GET /api/v1/macro/events`: Filtered macro calendar (`category`, `importance`, `event_status`, `from_date`, `to_date`, `limit`).
+  - `GET /api/v1/macro/upcoming`: Scheduled events sorted soonest first (`window: 'today' | '24h' | '7d' | '30d' | 'all'`).
+  - `GET /api/v1/macro/recent`: Published events with actual vs forecast and surprise metrics.
+  - `GET /api/v1/macro/portfolio`: Macro events directly affecting held portfolio assets.
+  - `GET /api/v1/macro/yield-curve`: Multi-tenor U.S. Treasury yields and 10Y-2Y spread.
+  - `GET /api/v1/macro/events/{event_id}`: Single event lookup.
+- **Frontend Dashboard**:
+  - Dedicated `/macro` dashboard with summary KPIs, Upcoming Calendar tab, Recent Releases tab, Treasury Yield Curve tab, and category/impact filter pills.
+  - Homepage Overview card featuring top upcoming high-impact macroeconomic events and countdowns.
+
+---
 
 ## Phase 2B — Financial News Intelligence Foundation
 

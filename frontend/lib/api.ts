@@ -219,6 +219,55 @@ export interface NewsStatusResponse {
   provider_statuses: Record<string, any>;
 }
 
+// Macro Intelligence Types (Phase 2C)
+export interface EconomicEvent {
+  id: string;
+  provider: string;
+  source: string;
+  source_url: string | null;
+  event_name: string;
+  event_code: string;
+  category: 'Monetary Policy' | 'Inflation' | 'Labor' | 'Growth' | 'Liquidity / Rates' | string;
+  country: string;
+  currency: string;
+  scheduled_at: string;
+  period: string | null;
+  actual: number | null;
+  forecast: number | null;
+  previous: number | null;
+  unit: string;
+  importance: 'high' | 'medium' | 'low';
+  event_status: 'upcoming' | 'released' | 'revised' | 'delayed' | 'cancelled' | 'unknown';
+  surprise_absolute: number | null;
+  surprise_percentage: number | null;
+  interpretation_direction: string | null;
+  market_impact_summary: string | null;
+  related_assets: string[];
+  portfolio_exposure: string[];
+  retrieved_at: string;
+  data_status: 'live' | 'cached' | 'stale' | 'unavailable' | 'provider_not_configured';
+}
+
+export interface YieldCurveData {
+  date: string;
+  rates: Record<string, number>;
+  spread_10y_2y_bps: number;
+  curve_inversion: boolean;
+  source: string;
+  retrieved_at: string;
+}
+
+export interface MacroStatusResponse {
+  service: string;
+  status: string;
+  providers_configured: string[];
+  total_events_tracked: number;
+  upcoming_events_count: number;
+  recent_events_count: number;
+  last_collection_at: string | null;
+  yield_curve_date: string | null;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
@@ -400,6 +449,84 @@ export async function fetchNewsStatus(): Promise<NewsStatusResponse> {
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch news status: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// Macro Intelligence Fetchers (Phase 2C)
+export async function fetchMacroStatus(): Promise<MacroStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/status`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch macro status: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchMacroEvents(params?: {
+  category?: string;
+  importance?: string;
+  event_status?: string;
+  from_date?: string;
+  to_date?: string;
+  limit?: number;
+}): Promise<EconomicEvent[]> {
+  const query = new URLSearchParams();
+  if (params?.category) query.append('category', params.category);
+  if (params?.importance) query.append('importance', params.importance);
+  if (params?.event_status) query.append('event_status', params.event_status);
+  if (params?.from_date) query.append('from_date', params.from_date);
+  if (params?.to_date) query.append('to_date', params.to_date);
+  if (params?.limit) query.append('limit', params.limit.toString());
+
+  const queryStr = query.toString() ? `?${query.toString()}` : '';
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/events${queryStr}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch macro events: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchUpcomingMacro(window: string = '7d', limit: number = 20): Promise<EconomicEvent[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/upcoming?window=${window}&limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch upcoming macro: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchRecentMacro(limit: number = 20): Promise<EconomicEvent[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/recent?limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch recent macro: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPortfolioMacro(limit: number = 20): Promise<EconomicEvent[]> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/portfolio?limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch portfolio macro: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTreasuryYieldCurve(): Promise<YieldCurveData | null> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/macro/yield-curve`, {
+    cache: 'no-store',
+  });
+  if (res.status === 503 || res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to fetch yield curve: HTTP ${res.status}`);
   }
   return res.json();
 }

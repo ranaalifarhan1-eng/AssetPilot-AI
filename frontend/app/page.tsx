@@ -4,6 +4,7 @@ import { MarketPulseCard } from '@/components/overview/MarketPulseCard';
 import { AIMarketBriefCard } from '@/components/overview/AIMarketBriefCard';
 import { OpportunitiesCard } from '@/components/overview/OpportunitiesCard';
 import { MarketIntelligenceCard } from '@/components/overview/MarketIntelligenceCard';
+import { MacroOverviewCard } from '@/components/overview/MacroOverviewCard';
 
 export default function OverviewPage() {
   return (
@@ -28,19 +29,16 @@ export default function OverviewPage() {
         <MarketPulseCard />
       </div>
 
-      {/* Grid Row 2: AI Market Brief & Opportunities */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
-          <AIMarketBriefCard />
-        </div>
-        <div className="lg:col-span-2">
-          <OpportunitiesCard />
-        </div>
+      {/* Grid Row 2: Upcoming Macro Events & AI Brief */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <MacroOverviewCard />
+        <AIMarketBriefCard />
       </div>
 
-      {/* Grid Row 3: Latest Market Intelligence */}
-      <div>
+      {/* Grid Row 3: Opportunities & Market Intelligence */}
+      <div className="space-y-6">
         <MarketIntelligenceCard />
+        <OpportunitiesCard />
       </div>
     </div>
   );
