@@ -53,7 +53,7 @@ class PortfolioStatusResponse(BaseModel):
     provider: str = Field("OKX", description="Portfolio data provider")
     read_only_expected: bool = Field(True, description="Enforces strict read-only requirement")
     last_successful_sync: Optional[datetime] = Field(None, description="Timestamp of last successful sync")
-    connection_status: str = Field(..., description="Status: 'connected', 'unconfigured', 'error'")
+    connection_status: str = Field(..., description="Status: 'configured_unverified', 'unconfigured', 'error'")
 
 class AccountSourcesResponse(BaseModel):
     provider: str = "OKX"

@@ -35,12 +35,20 @@ class EconomicEvent(BaseModel):
     # Explicit Field-Level Provenance
     schedule_source: Optional[str] = Field(None, description="Source agency providing the scheduled date")
     schedule_source_url: Optional[str] = Field(None, description="URL where release schedule is officially published")
+    schedule_status: str = Field("unavailable", description="Schedule provenance: live, cached, fallback, unavailable")
+    schedule_retrieved_at: Optional[datetime] = None
     forecast_source: Optional[str] = Field(None, description="Verified provider of consensus forecast (null if none)")
     forecast_source_url: Optional[str] = Field(None, description="URL of forecast provider")
     actual_source: Optional[str] = Field(None, description="Primary source providing the actual release figure")
     actual_source_url: Optional[str] = Field(None, description="URL where actual figure was officially released")
+    actual_status: str = Field("unavailable", description="Actual-value provenance: live, cached, fallback, unavailable")
+    actual_retrieved_at: Optional[datetime] = None
     previous_source: Optional[str] = Field(None, description="Primary source for previous period figure")
     previous_source_url: Optional[str] = Field(None, description="URL for previous period release")
+    previous_status: str = Field("unavailable", description="Previous-value provenance: live, cached, fallback, unavailable")
+    previous_retrieved_at: Optional[datetime] = None
+    forecast_status: str = Field("unavailable", description="Forecast provenance: live, cached, fallback, unavailable")
+    forecast_retrieved_at: Optional[datetime] = None
     
     related_assets: List[str] = Field(default_factory=list, description="Broad market assets exposed (e.g. BTC, ETH, US Equities, xStocks)")
     portfolio_exposure: List[str] = Field(default_factory=list, description="Intersection of related assets with user's active portfolio")

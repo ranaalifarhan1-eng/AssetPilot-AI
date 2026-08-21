@@ -270,8 +270,10 @@ class OfficialScheduleProvider(BaseMacroProvider):
             event_id = f"us-{event_code.lower()}-{item['year']}-{item['month']:02d}-{item['day']:02d}"
 
             is_past = utc_dt < now_utc
-            actual_val = item["actual"] if (is_past and item["actual"] is not None) else None
-            event_status = "released" if (is_past and actual_val is not None) else "upcoming"
+            # This table is a bundled emergency schedule, not a live observations feed.
+            # Never publish its embedded numeric observations as verified actual/previous data.
+            actual_val = None
+            event_status = "unknown" if is_past else "upcoming"
 
             # Forecast: None because government statistical calendars do not supply market consensus
             forecast_val = None
@@ -286,7 +288,7 @@ class OfficialScheduleProvider(BaseMacroProvider):
                 category=category,
                 actual=actual_val,
                 forecast=forecast_val,
-                previous=item["previous"]
+                previous=None
             )
 
             related_assets = MacroContextEngine.get_related_assets(event_code, category)
@@ -308,7 +310,7 @@ class OfficialScheduleProvider(BaseMacroProvider):
                     period=item["period"],
                     actual=actual_val,
                     forecast=forecast_val,
-                    previous=item["previous"],
+                    previous=None,
                     unit=item["unit"],
                     importance=item["importance"],
                     event_status=event_status,
@@ -318,16 +320,21 @@ class OfficialScheduleProvider(BaseMacroProvider):
                     market_impact_summary=impact_summary,
                     schedule_source=item["agency"],
                     schedule_source_url=item["schedule_url"],
+                    schedule_status="fallback",
+                    schedule_retrieved_at=now_utc,
                     forecast_source=forecast_source,
                     forecast_source_url=forecast_source_url,
-                    actual_source=item["agency"] if actual_val is not None else None,
-                    actual_source_url=item["report_url"] if actual_val is not None else None,
-                    previous_source=item["agency"] if item["previous"] is not None else None,
-                    previous_source_url=item["report_url"] if item["previous"] is not None else None,
+                    actual_source=None,
+                    actual_source_url=None,
+                    actual_status="unavailable",
+                    previous_source=None,
+                    previous_source_url=None,
+                    previous_status="unavailable",
+                    forecast_status="unavailable",
                     related_assets=related_assets,
                     portfolio_exposure=[],
                     retrieved_at=now_utc,
-                    data_status="live"
+                    data_status="fallback"
                 )
             )
 

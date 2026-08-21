@@ -45,6 +45,13 @@ def test_unconfigured_portfolio_status():
         assert "passphrase" not in data
         assert "OK-ACCESS-KEY" not in data
 
+def test_configured_status_does_not_claim_unverified_connection():
+    with patch.object(OKXAccountClient, "is_configured", return_value=True):
+        response = client.get("/api/v1/portfolio/status")
+        assert response.status_code == 200
+        assert response.json()["connection_status"] == "configured_unverified"
+        assert response.json()["last_successful_sync"] is None
+
 def test_unconfigured_portfolio_summary():
     with patch.object(OKXAccountClient, "is_configured", return_value=False):
         response = client.get("/api/v1/portfolio")
@@ -324,7 +331,27 @@ def test_invalid_credentials_error_handling(mock_trading, mock_is_config):
     assert summary.data_status == "error"
     assert summary.valuation_status == "error"
     assert "Failed to sync OKX portfolio" in summary.error_message
+    assert "401" not in summary.error_message
     assert summary.total_value_usdt == "0.00"
+
+@pytest.mark.asyncio
+async def test_portfolio_does_not_cache_derived_balance_snapshot():
+    account = MagicMock()
+    account.is_configured.return_value = True
+    account.fetch_trading_balances = AsyncMock(side_effect=[
+        [{"currency": "USDT", "balance": "10", "available": "10", "frozen": "0", "source": "Trading"}],
+        [{"currency": "USDT", "balance": "25", "available": "25", "frozen": "0", "source": "Trading"}],
+    ])
+    account.fetch_funding_balances = AsyncMock(return_value=[])
+    account.fetch_earn_balances = AsyncMock(return_value=[])
+
+    service = PortfolioService(account_client=account)
+    first = await service.get_portfolio_summary()
+    second = await service.get_portfolio_summary()
+
+    assert first.total_value_usdt == "10.00"
+    assert second.total_value_usdt == "25.00"
+    assert account.fetch_trading_balances.await_count == 2
 
 def test_public_market_api_isolation():
     res_health = client.get("/api/v1/health")

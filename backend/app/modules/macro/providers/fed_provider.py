@@ -63,12 +63,10 @@ class FederalReserveProvider(BaseMacroProvider):
             event_id = f"us-fomc-rate-{item['year']}-{item['month']:02d}-{item['day']:02d}"
             is_past = utc_dt < now_utc
 
-            if is_past and item["actual"] is not None:
-                event_status = "released"
-                actual_val = item["actual"]
-            else:
-                event_status = "upcoming"
-                actual_val = None
+            # Bundled dates are fallback schedule metadata only; release state and
+            # observations require a verified live acquisition.
+            event_status = "unknown" if is_past else "upcoming"
+            actual_val = None
 
             # Forecast: None because the Federal Reserve does NOT publish consensus forecasts on its own decisions
             forecast_val = None
@@ -76,9 +74,9 @@ class FederalReserveProvider(BaseMacroProvider):
             interp_dir, impact_summary = MacroContextEngine.derive_interpretation(
                 event_code="FED_RATE",
                 category="Monetary Policy",
-                actual=actual_val,
+                actual=None,
                 forecast=forecast_val,
-                previous=item["previous"]
+                previous=None
             )
 
             related_assets = MacroContextEngine.get_related_assets("FED_RATE", "Monetary Policy")
@@ -98,9 +96,9 @@ class FederalReserveProvider(BaseMacroProvider):
                     currency="USD",
                     scheduled_at=utc_dt,
                     period=item["period"],
-                    actual=actual_val,
+                    actual=None,
                     forecast=forecast_val,
-                    previous=item["previous"],
+                    previous=None,
                     unit="%",
                     importance="high",
                     event_status=event_status,
@@ -110,16 +108,21 @@ class FederalReserveProvider(BaseMacroProvider):
                     market_impact_summary=impact_summary,
                     schedule_source="Federal Reserve Board",
                     schedule_source_url=FOMC_SCHEDULE_URL,
+                    schedule_status="fallback",
+                    schedule_retrieved_at=now_utc,
                     forecast_source=None,
                     forecast_source_url=None,
-                    actual_source="Federal Reserve Board" if actual_val is not None else None,
-                    actual_source_url=FOMC_SCHEDULE_URL if actual_val is not None else None,
-                    previous_source="Federal Reserve Board",
-                    previous_source_url=FOMC_SCHEDULE_URL,
+                    actual_source=None,
+                    actual_source_url=None,
+                    actual_status="unavailable",
+                    previous_source=None,
+                    previous_source_url=None,
+                    previous_status="unavailable",
+                    forecast_status="unavailable",
                     related_assets=related_assets,
                     portfolio_exposure=[],
                     retrieved_at=now_utc,
-                    data_status="live"
+                    data_status="fallback"
                 )
             )
 

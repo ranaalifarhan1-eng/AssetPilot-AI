@@ -17,7 +17,6 @@ from app.modules.market_data.cache import global_cache
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_LATEST = "portfolio_summary"
 CACHE_PREFIX_LAST_PRICE = "last_known_price:"
 STALE_PRICE_MAX_AGE_SECONDS = 900.0  # 15 minutes staleness window for fallback pricing
 
@@ -54,8 +53,8 @@ class PortfolioService:
             configured=is_config,
             provider="OKX",
             read_only_expected=True,
-            last_successful_sync=datetime.now(timezone.utc) if is_config else None,
-            connection_status="connected" if is_config else "unconfigured"
+            last_successful_sync=None,
+            connection_status="configured_unverified" if is_config else "unconfigured"
         )
 
     async def get_portfolio_summary(self) -> PortfolioSummary:
@@ -80,10 +79,6 @@ class PortfolioService:
                 data_status="unconfigured",
                 error_message="OKX read-only API credentials not configured in backend environment."
             )
-
-        cached = await global_cache.get(CACHE_KEY_LATEST)
-        if cached:
-            return cached
 
         try:
             # Concurrently fetch Trading, Funding, and Earn balances
@@ -298,8 +293,6 @@ class PortfolioService:
                 error_message=None
             )
 
-            # Cache latest portfolio summary for 30 seconds
-            await global_cache.set(CACHE_KEY_LATEST, summary, ttl=30.0)
             return summary
 
         except Exception as e:
@@ -321,5 +314,5 @@ class PortfolioService:
                 last_synced_at=None,
                 provider="OKX",
                 data_status="error",
-                error_message=f"Failed to sync OKX portfolio: {str(e)}"
+                error_message="Failed to sync OKX portfolio. Verify the read-only connection and try again."
             )

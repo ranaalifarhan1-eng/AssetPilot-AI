@@ -139,8 +139,10 @@ class CandleResponse(BaseModel):
     timeframe: str
     provider: str
     candles: List[NormalizedCandle]
+    data_status: str = Field("live", description="Response provenance: live or cached")
 
 class MarketOverviewResponse(BaseModel):
     updated_at: datetime
     provider: str
     tickers: List[NormalizedTicker]
+    data_status: str = Field("live", description="Response provenance: live or cached")

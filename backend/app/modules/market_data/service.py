@@ -85,7 +85,7 @@ class MarketDataService:
         cache_key = f"ticker:{symbol_upper}"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={"data_status": "cached"})
 
         ticker = await self.crypto_provider.get_ticker(symbol_upper)
         await self.cache.set(cache_key, ticker, ttl=10.0)
@@ -95,7 +95,10 @@ class MarketDataService:
         cache_key = "overview"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={
+                "data_status": "cached",
+                "tickers": [t.model_copy(update={"data_status": "cached"}) for t in cached.tickers],
+            })
 
         supported = await self.crypto_provider.get_supported_assets()
         symbols = [asset.symbol for asset in supported]
@@ -114,7 +117,7 @@ class MarketDataService:
         cache_key = f"candles:{symbol_upper}:{timeframe}:{limit}"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={"data_status": "cached"})
 
         if symbol_upper in SUPPORTED_EQUITIES_MAP:
             candles = await self.equity_provider.get_candles(symbol_upper, timeframe, limit)
@@ -137,7 +140,7 @@ class MarketDataService:
         cache_key = "equities_quotes"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return [q.model_copy(update={"data_status": "cached"}) for q in cached]
 
         symbols = list(SUPPORTED_EQUITIES_MAP.keys())
         quotes = await self.equity_provider.get_quotes(symbols)
@@ -149,7 +152,7 @@ class MarketDataService:
         cache_key = f"equity_quote:{sym_upper}"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={"data_status": "cached"})
 
         quote = await self.equity_provider.get_quote(sym_upper)
         await self.cache.set(cache_key, quote, ttl=30.0)
@@ -160,7 +163,7 @@ class MarketDataService:
         cache_key = "tokenized_equities_quotes"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return [q.model_copy(update={"data_status": "cached"}) for q in cached]
 
         quotes = await self.tokenized_provider.get_tokenized_quotes()
         await self.cache.set(cache_key, quotes, ttl=20.0)
@@ -171,7 +174,7 @@ class MarketDataService:
         cache_key = f"tokenized_quote:{clean_sym}"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={"data_status": "cached"})
 
         quote = await self.tokenized_provider.get_tokenized_quote(clean_sym)
         await self.cache.set(cache_key, quote, ttl=20.0)
@@ -189,7 +192,10 @@ class MarketDataService:
         cache_key = f"equity_comparison:{sym_upper}"
         cached = await self.cache.get(cache_key)
         if cached:
-            return cached
+            return cached.model_copy(update={
+                "underlying_data_status": "cached" if cached.underlying_price else cached.underlying_data_status,
+                "tokenized_data_status": "cached" if cached.tokenized_price else cached.tokenized_data_status,
+            })
 
         comp_name = RECOGNIZED_UNDERLYING_MAP.get(sym_upper, f"{sym_upper} Corporation")
 

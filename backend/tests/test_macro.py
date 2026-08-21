@@ -204,7 +204,11 @@ async def test_fomc_september_date_and_null_forecast():
     assert sep_fomc.scheduled_at.day == 16
     assert sep_fomc.scheduled_at.hour == 18  # 14:00 EDT -> 18:00 UTC
     assert sep_fomc.forecast is None
-    assert sep_fomc.previous == 4.00
+    assert sep_fomc.previous is None
+    assert sep_fomc.schedule_status == "fallback"
+    assert sep_fomc.data_status == "fallback"
+    assert sep_fomc.actual_status == "unavailable"
+    assert sep_fomc.previous_status == "unavailable"
 
 @pytest.mark.asyncio
 async def test_jobless_claims_separate_source_and_null_forecast():
