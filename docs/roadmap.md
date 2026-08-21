@@ -17,7 +17,7 @@
 ## Phase 2: News Intelligence & Technical Analysis Engine
 - [ ] News feed collector (RSS feeds, crypto/stock news scrapers).
 - [ ] Article deduplication and relevance scoring pipeline.
-- [ ] Local Technical Analysis module (SMA, EMA, RSI, MACD, Bollinger Bands).
+- [x] Local deterministic Technical Intelligence module (SMA, EMA, RSI, MACD, ATR, Bollinger Bands, structure, and volume context).
 - [ ] Integrated Market Intelligence cards on the dashboard shell.
 
 ## Phase 3: AI Intelligence Engine & Recommendation Framework

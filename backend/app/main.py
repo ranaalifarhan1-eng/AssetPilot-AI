@@ -11,6 +11,7 @@ from app.api.v1.markets import router as markets_router, market_service
 from app.api.v1.portfolio import router as portfolio_router, portfolio_service
 from app.api.v1.news import router as news_router
 from app.api.v1.macro import router as macro_router
+from app.api.v1.technical import router as technical_router, technical_service
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -26,6 +27,7 @@ async def lifespan(_: FastAPI):
         market_service.tokenized_provider._custom_client = provider_client
         portfolio_service.account_client._custom_client = provider_client
         portfolio_service.market_service.crypto_provider._custom_client = provider_client
+        technical_service.market_service.crypto_provider._custom_client = provider_client
         try:
             yield
         finally:
@@ -34,6 +36,7 @@ async def lifespan(_: FastAPI):
             market_service.tokenized_provider._custom_client = None
             portfolio_service.account_client._custom_client = None
             portfolio_service.market_service.crypto_provider._custom_client = None
+            technical_service.market_service.crypto_provider._custom_client = None
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -60,6 +63,7 @@ app.include_router(markets_router, prefix=f"{settings.API_V1_STR}/markets", tags
 app.include_router(portfolio_router, prefix=f"{settings.API_V1_STR}/portfolio", tags=["Portfolio"])
 app.include_router(news_router, prefix=f"{settings.API_V1_STR}/news", tags=["News Intelligence"])
 app.include_router(macro_router, prefix=f"{settings.API_V1_STR}/macro", tags=["Macro Intelligence"])
+app.include_router(technical_router, prefix=f"{settings.API_V1_STR}/technical", tags=["Technical Intelligence"])
 
 @app.get("/", tags=["Root"])
 async def root():

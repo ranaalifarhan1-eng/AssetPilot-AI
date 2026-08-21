@@ -36,6 +36,8 @@ AssetPilot AI is structured as a low-cost, high-efficiency personal market intel
                    │  - /api/v1/markets/equities (Stocks)      │
                    │  - /api/v1/markets/tokenized-equities     │
                    │  - /api/v1/markets/equity-comparison      │
+                   │  - /api/v1/technical/{symbol}             │
+                   │  - /api/v1/technical/{symbol}/multi-timeframe │
                    └─────────────────────┬─────────────────────┘
                                          │
                                          ▼

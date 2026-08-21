@@ -10,11 +10,13 @@ import {
   fetchEquities,
   fetchTokenizedEquities,
   fetchEquityComparison,
+  fetchTechnicalAnalysis,
   NormalizedTicker,
   NormalizedCandle,
   NormalizedEquityQuote,
   NormalizedTokenizedEquityQuote,
   EquityComparisonResponse,
+  TechnicalAnalysisResponse,
 } from '@/lib/api';
 import {
   TrendingUp,
@@ -44,6 +46,7 @@ export default function MarketsPage() {
   const [timeframe, setTimeframe] = useState<string>('1H');
   const [cryptoLoading, setCryptoLoading] = useState<boolean>(true);
   const [chartLoading, setChartLoading] = useState<boolean>(false);
+  const [technical, setTechnical] = useState<TechnicalAnalysisResponse | null>(null);
 
   // Stocks state
   const [equities, setEquities] = useState<NormalizedEquityQuote[]>([]);
@@ -81,11 +84,15 @@ export default function MarketsPage() {
   const loadCandles = async (sym: string, tf: string) => {
     try {
       setChartLoading(true);
-      const data = await fetchAssetCandles(sym, tf, 50);
+      // Fetch 300 once so the technical endpoint reuses the exact normalized candle cache key.
+      const data = await fetchAssetCandles(sym, tf, 300);
       setCandles(data.candles || []);
+      const evidence = await fetchTechnicalAnalysis(sym, tf);
+      setTechnical(evidence);
     } catch (err: any) {
       console.error(`Error loading candles for ${sym}:`, err);
       setCandles([]);
+      setTechnical(null);
     } finally {
       setChartLoading(false);
     }
@@ -343,6 +350,53 @@ export default function MarketsPage() {
             ) : (
               <div className="h-48 flex items-center justify-center text-xs text-gray-500 font-mono">
                 No candle history available.
+              </div>
+            )}
+          </Card>
+
+          <Card
+            title="Technical Snapshot"
+            subtitle={`Deterministic ${selectedCrypto} evidence from verified ${timeframe} OHLCV candles`}
+            badge={<Badge variant="blue" size="sm">TECHNICAL DATA</Badge>}
+          >
+            {chartLoading ? (
+              <div className="py-8 text-center text-xs text-gray-400 font-mono">Computing technical evidence...</div>
+            ) : technical && technical.data_status !== 'insufficient_data' ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                  {[
+                    ['Trend', technical.trend.state.replaceAll('_', ' ')],
+                    ['RSI 14', technical.momentum.rsi_14?.toFixed(1) ?? 'N/A'],
+                    ['MACD', technical.momentum.macd_state],
+                    ['Volatility', technical.volatility.state],
+                    ['Relative Volume', technical.volume.relative_volume != null ? `${technical.volume.relative_volume.toFixed(2)}x` : 'N/A'],
+                    ['ATR', technical.volatility.atr_14?.toLocaleString() ?? 'N/A'],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-gray-800 bg-gray-950/50 p-3">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">{label}</div>
+                      <div className="mt-1 text-sm font-semibold capitalize text-gray-100">{value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 flex justify-between">
+                    <span className="text-gray-400">Recent swing high</span>
+                    <span className="text-gray-100">{technical.structure.recent_swing_high?.toLocaleString() ?? 'N/A'}</span>
+                  </div>
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3 flex justify-between">
+                    <span className="text-gray-400">Recent swing low</span>
+                    <span className="text-gray-100">{technical.structure.recent_swing_low?.toLocaleString() ?? 'N/A'}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 pt-3 text-[10px] text-gray-500 font-mono">
+                  <span>Source: {technical.provider} {technical.provider_symbol} • {technical.source_data_status.toUpperCase()}</span>
+                  <span>{technical.candles_used} candles • As of {technical.source_last_updated ? new Date(technical.source_last_updated).toLocaleString() : 'N/A'}</span>
+                </div>
+                <p className="text-[10px] text-gray-500">Descriptive quantitative evidence only. Not an investment recommendation.</p>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-xs text-gray-500 font-mono">
+                {technical?.data_status === 'insufficient_data' ? 'Insufficient verified candle history for technical analysis.' : 'Technical evidence unavailable.'}
               </div>
             )}
           </Card>

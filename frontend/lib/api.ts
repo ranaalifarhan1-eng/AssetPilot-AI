@@ -120,6 +120,38 @@ export interface CandleResponse {
   candles: NormalizedCandle[];
 }
 
+export interface TechnicalAnalysisResponse {
+  asset: string;
+  provider_symbol: string;
+  timeframe: string;
+  provider: string;
+  data_status: string;
+  source_data_status: string;
+  candles_used: number;
+  source_last_updated: string | null;
+  analysis_as_of: string | null;
+  analysis_computed_at: string;
+  current_price: number | null;
+  trend: {
+    state: string; sma_20: number | null; sma_50: number | null; sma_200: number | null;
+    ema_12: number | null; ema_26: number | null; ema_50: number | null;
+    price_vs_sma_20_pct: number | null; price_vs_sma_50_pct: number | null;
+  };
+  momentum: {
+    state: string; rsi_14: number | null; rsi_state: string; macd: number | null;
+    signal: number | null; histogram: number | null; macd_state: string; roc_10_pct: number | null;
+  };
+  volatility: {
+    state: string; atr_14: number | null; atr_pct: number | null; bollinger_upper: number | null;
+    bollinger_middle: number | null; bollinger_lower: number | null; bollinger_bandwidth_pct: number | null;
+  };
+  structure: {
+    recent_swing_high: number | null; recent_swing_low: number | null; rolling_high_20: number | null;
+    rolling_low_20: number | null; distance_from_high_pct: number | null; distance_from_low_pct: number | null;
+  };
+  volume: { current: number | null; average_20: number | null; relative_volume: number | null };
+}
+
 export interface AccountSourceBalance {
   source: string;
   balance: string;
@@ -378,6 +410,14 @@ export async function fetchAssetCandles(
   );
   if (!res.ok) {
     throw new Error(`Failed to fetch candles for ${symbol}: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTechnicalAnalysis(symbol: string, timeframe: string = '1H'): Promise<TechnicalAnalysisResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/technical/${symbol}?timeframe=${timeframe}`, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch technical analysis for ${symbol}: HTTP ${res.status}`);
   }
   return res.json();
 }
