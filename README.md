@@ -43,6 +43,34 @@ AssetPilot AI/
 └── .gitignore           # Git ignore rules for node_modules, .venv, .env, etc.
 ```
 
+## Phase 2B — Financial News Intelligence Foundation
+
+- **News Intelligence Pipeline**:
+  - `Sources → Collection → Normalization → Deduplication → Entity Mapping → Relevance → Classification → Dashboard`
+- **Provider Architecture**:
+  - `FinnhubNewsProvider`: General market, crypto, and company-specific news (`/news?category=general`, `/news?category=crypto`, `/company-news`).
+  - `RSSNewsProvider`: Curated public feeds from regulatory and macroeconomic authorities (SEC Press Releases, Federal Reserve, CoinDesk, Yahoo Finance).
+- **Intelligent Entity & Tokenized Mapping**:
+  - Identifies primary assets (`BTC`, `ETH`, `SOL`, `AAPL`, `MSFT`, `GOOGL`, `NVDA`, `META`, `AMZN`, `TSLA`, `MSTR`, `MU`, `MRVL`).
+  - Distinguishes underlying equities from tokenized representations (`xAAPL`, `xGOOGL`, `xNVDA`, `xMSTR`, etc.).
+- **Deduplication & Syndication Grouping**:
+  - Consolidates syndicated copies across multiple publishers using normalized headline stemming, Jaccard token similarity, and time-window grouping.
+  - Tracks `duplicate_count` to indicate syndication depth while preserving original source provenance.
+- **Conservative Sentiment & Impact Classification**:
+  - Deterministic sentiment scoring (`positive`, `neutral`, `negative`, `mixed`) strictly as informational metadata (never buy/sell recommendations).
+  - Market impact rating (`high`, `medium`, `low`) for earnings, monetary policy (FOMC/rate decisions), regulatory actions, and major corporate events.
+- **Portfolio Relevance Integration**:
+  - Cross-references incoming news with active read-only OKX portfolio holdings (e.g. `Portfolio Asset: BTC`).
+  - Boosts relevance ranking without triggering redundant exchange API calls.
+- **API Endpoints (`/api/v1/news`)**:
+  - `GET /api/v1/news`: Filtered news feed (`category`, `asset`, `source`, `sentiment`, `impact`, `portfolio_only`, `limit`, `offset`).
+  - `GET /api/v1/news/assets/{symbol}`: Asset-specific news stories.
+  - `GET /api/v1/news/portfolio`: News matching held OKX assets.
+  - `GET /api/v1/news/status`: News providers and collection metadata.
+- **Frontend News Intelligence Dashboard**:
+  - Full-featured `/news` page with top metrics, category tabs, sentiment/impact dropdowns, search bar, and article cards.
+  - Overview integration: Live Top 3 market intelligence stories on homepage.
+
 ---
 
 ## Phase 2A — Stocks & OKX Tokenized Stocks Foundation

@@ -158,6 +158,55 @@ export interface PortfolioStatusResponse {
   connection_status: 'connected' | 'unconfigured' | 'error';
 }
 
+// News Intelligence Types (Phase 2B)
+export interface RelatedAsset {
+  symbol: string;
+  display_symbol: string;
+  name: string | null;
+  asset_type: 'crypto' | 'equity';
+  relationship_type: 'primary' | 'secondary' | 'tokenized_exposure';
+  tokenized_symbol: string | null;
+}
+
+export interface NewsArticle {
+  id: string;
+  external_id: string | null;
+  headline: string;
+  summary: string | null;
+  source: string;
+  publisher: string | null;
+  url: string;
+  published_at: string;
+  retrieved_at: string;
+  category: 'general' | 'crypto' | 'company' | 'macro' | 'regulation' | 'earnings' | 'technology' | 'monetary_policy' | 'etf_institutional';
+  related_assets: RelatedAsset[];
+  related_companies: string[];
+  relevance_score: number;
+  sentiment_label: 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
+  sentiment_score: number;
+  impact_level: 'low' | 'medium' | 'high' | 'unknown';
+  is_portfolio_relevant: boolean;
+  portfolio_asset_match: string | null;
+  duplicate_count: number;
+  data_status: 'live' | 'cached' | 'stale' | 'unavailable' | 'provider_not_configured';
+}
+
+export interface NewsListResponse {
+  articles: NewsArticle[];
+  total_count: number;
+  portfolio_relevant_count: number;
+  last_collected_at: string | null;
+  data_status: 'live' | 'cached' | 'stale' | 'unavailable' | 'provider_not_configured';
+}
+
+export interface NewsStatusResponse {
+  configured_sources: string[];
+  active_sources: string[];
+  total_cached_articles: number;
+  last_successful_collection: string | null;
+  provider_statuses: Record<string, any>;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8000';
 
 export async function fetchMarketOverview(): Promise<MarketOverviewResponse> {
@@ -278,6 +327,67 @@ export async function fetchPortfolioStatus(): Promise<PortfolioStatusResponse> {
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch portfolio status: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// News Intelligence API functions
+export async function fetchNewsFeed(params?: {
+  category?: string;
+  asset?: string;
+  source?: string;
+  sentiment?: string;
+  impact?: string;
+  portfolio_only?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<NewsListResponse> {
+  const query = new URLSearchParams();
+  if (params?.category) query.append('category', params.category);
+  if (params?.asset) query.append('asset', params.asset);
+  if (params?.source) query.append('source', params.source);
+  if (params?.sentiment) query.append('sentiment', params.sentiment);
+  if (params?.impact) query.append('impact', params.impact);
+  if (params?.portfolio_only) query.append('portfolio_only', 'true');
+  if (params?.limit) query.append('limit', params.limit.toString());
+  if (params?.offset) query.append('offset', params.offset.toString());
+
+  const queryStr = query.toString() ? `?${query.toString()}` : '';
+  const res = await fetch(`${API_BASE_URL}/api/v1/news${queryStr}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch news feed: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchNewsForAsset(symbol: string, limit: number = 20): Promise<NewsListResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/news/assets/${symbol}?limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch news for asset ${symbol}: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPortfolioNews(limit: number = 20): Promise<NewsListResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/news/portfolio?limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch portfolio news: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchNewsStatus(): Promise<NewsStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/v1/news/status`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch news status: HTTP ${res.status}`);
   }
   return res.json();
 }

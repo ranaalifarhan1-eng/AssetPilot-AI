@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import {
@@ -30,6 +31,7 @@ import {
   X,
   Info,
   Sliders,
+  Newspaper,
 } from 'lucide-react';
 
 export default function MarketsPage() {
@@ -421,12 +423,20 @@ export default function MarketsPage() {
                             </Badge>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => openComparisonModal(eq.symbol)}
-                              className="px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 text-[11px] font-sans transition-colors inline-flex items-center gap-1"
-                            >
-                              <ArrowRightLeft className="h-3 w-3" /> Compare with xStock
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Link
+                                href="/news"
+                                className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-sans transition-colors inline-flex items-center gap-1"
+                              >
+                                <Newspaper className="h-3 w-3 text-blue-400" /> News
+                              </Link>
+                              <button
+                                onClick={() => openComparisonModal(eq.symbol)}
+                                className="px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 text-[11px] font-sans transition-colors inline-flex items-center gap-1"
+                              >
+                                <ArrowRightLeft className="h-3 w-3" /> Compare with xStock
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

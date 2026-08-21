@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.api.v1.health import router as health_router
 from app.api.v1.markets import router as markets_router
 from app.api.v1.portfolio import router as portfolio_router
+from app.api.v1.news import router as news_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(health_router, prefix=settings.API_V1_STR, tags=["Health"])
 app.include_router(markets_router, prefix=f"{settings.API_V1_STR}/markets", tags=["Markets"])
 app.include_router(portfolio_router, prefix=f"{settings.API_V1_STR}/portfolio", tags=["Portfolio"])
+app.include_router(news_router, prefix=f"{settings.API_V1_STR}/news", tags=["News Intelligence"])
 
 @app.get("/", tags=["Root"])
 async def root():
